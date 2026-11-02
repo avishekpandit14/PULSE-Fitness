@@ -1,0 +1,100 @@
+# Flutter and generated output
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub/
+.pub-cache/
+/build/
+/coverage/
+*.apk
+*.aab
+**/doc/api/
+
+# Platform-generated Flutter files
+ios/Flutter/.last_build_id
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Pods/
+ios/.symlinks/
+macos/Flutter/ephemeral/
+macos/Pods/
+
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+*.swp
+*.swo
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+android/.gradle/
+android/local.properties
+android/.cxx/
+android/captures/
+
+# Local data and health records
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+databases/
+local_data/
+health_data/
+exports/
+backups/
+
+# Signing credentials and secrets
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.p8
+*.mobileprovision
+*.provisionprofile
+key.properties
+keystore.properties
+signing.properties
+.env
+.env.*
+!.env.example
+*.secret
+*credentials*
+*secrets*
+
+# Personal IDE and machine-specific files
+.vscode/
+xcuserdata/
+DerivedData/
+.DS_Store

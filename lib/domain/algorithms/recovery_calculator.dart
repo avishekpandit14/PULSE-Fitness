@@ -1,0 +1,365 @@
+import '../models/checkin_model.dart';
+import '../models/recovery_result.dart';
+import '../models/sleep_session_model.dart';
+
+/// Transparent, deterministic, HRV-free recovery score calculation.
+/// Designed for trackers that expose standard health signals through Health Connect,
+/// including devices where nocturnal HRV is not reported.
+class RecoveryCalculator {
+  // Configurable heuristic initial weights (must sum to 1.0)
+  static const double defaultSleepWeight = 0.35;
+  static const double defaultRhrWeight = 0.25;
+  static const double defaultStrainWeight = 0.15;
+  static const double defaultEnergyWeight = 0.10;
+  static const double defaultSorenessWeight = 0.10;
+  static const double defaultFatigueWeight = 0.05;
+
+  // Minimum consecutive RHR daily observations needed before establishing a personal baseline
+  static const int minRhrBaselineObservations = 3;
+
+  // Minimum active weight coverage to generate a score (35% threshold)
+  static const double minWeightThreshold = 0.35;
+
+  /// Computes the comprehensive recovery result.
+  static RecoveryResult calculate({
+    required SleepSessionModel? sleepSession,
+    required double? todayRhr,
+    required List<double> historicalRhrs,
+    required double? yesterdayStrain,
+    required CheckInModel? checkIn,
+    required double sleepTargetHours,
+  }) {
+    final Map<String, double> componentScores = {};
+    final Map<String, double> rawWeights = {};
+    final List<String> availableSignals = [];
+    final List<String> missingSignals = [];
+
+    // 1. Sleep Duration Score (35%)
+    if (sleepSession != null && sleepSession.totalMinutes > 0) {
+      final sleepScore = calculateSleepScore(
+        actualMinutes: sleepSession.totalMinutes,
+        targetHours: sleepTargetHours,
+      );
+      componentScores['Sleep Duration'] = sleepScore;
+      rawWeights['Sleep Duration'] = defaultSleepWeight;
+      availableSignals.add(
+        'Sleep Duration (${sleepSession.hours.toStringAsFixed(1)}h)',
+      );
+    } else {
+      missingSignals.add(
+        'Sleep Session (No compatible sleep record was found)',
+      );
+    }
+
+    // 2. Resting Heart Rate Score (25%)
+    final double? baselineRhr = _computeRhrBaseline(historicalRhrs);
+    final int rhrObservationsCount = historicalRhrs.length;
+
+    if (todayRhr != null && todayRhr > 30 && todayRhr < 180) {
+      if (baselineRhr != null) {
+        final rhrScore = calculateRhrScore(
+          todayRhr: todayRhr,
+          baselineRhr: baselineRhr,
+        );
+        componentScores['Resting HR'] = rhrScore;
+        rawWeights['Resting HR'] = defaultRhrWeight;
+        availableSignals.add(
+          'Resting HR (${todayRhr.round()} bpm vs baseline ${baselineRhr.round()} bpm)',
+        );
+      } else {
+        missingSignals.add(
+          'RHR Baseline ($rhrObservationsCount/$minRhrBaselineObservations days logged. Baseline establishing...)',
+        );
+      }
+    } else {
+      missingSignals.add('Resting Heart Rate (No resting sample recorded)');
+    }
+
+    // 3. Recent Training Load Score (15%)
+    if (yesterdayStrain != null) {
+      final strainScore = calculateStrainRecoveryScore(yesterdayStrain);
+      componentScores['Recent Load'] = strainScore;
+      rawWeights['Recent Load'] = defaultStrainWeight;
+      availableSignals.add(
+        'Recent Strain (${yesterdayStrain.toStringAsFixed(1)})',
+      );
+    } else {
+      // If yesterday strain is unknown, omit signal rather than assuming zero
+      missingSignals.add('Recent Training Load (No prior day strain tracked)');
+    }
+
+    // 4. Daily Check-in: Energy (10%), Soreness (10%), Fatigue (5%)
+    if (checkIn != null) {
+      final energyScore = calculateEnergyScore(checkIn.energy);
+      final sorenessScore = calculateSorenessScore(checkIn.muscleSoreness);
+      final fatigueScore = calculateFatigueScore(checkIn.fatigue);
+
+      componentScores['Energy'] = energyScore;
+      rawWeights['Energy'] = defaultEnergyWeight;
+
+      componentScores['Muscle Soreness'] = sorenessScore;
+      rawWeights['Muscle Soreness'] = defaultSorenessWeight;
+
+      componentScores['Fatigue'] = fatigueScore;
+      rawWeights['Fatigue'] = defaultFatigueWeight;
+
+      availableSignals.add('Subjective Check-in (Energy, Soreness, Fatigue)');
+    } else {
+      missingSignals.add('Daily Check-in (Pending user morning check-in)');
+    }
+
+    // Calculate sum of active weights
+    final double activeWeightSum = rawWeights.values.fold(0.0, (a, b) => a + b);
+
+    // If active weight is below threshold, data is insufficient
+    if (activeWeightSum < minWeightThreshold) {
+      return RecoveryResult(
+        score: null,
+        category: RecoveryCategory.notEnoughData,
+        confidence: ConfidenceLevel.low,
+        shortExplanation:
+            'Not enough data to calculate an accurate recovery estimate.',
+        detailedExplanation:
+            'Recovery calculation requires at least a sleep session from Health Connect '
+            'or a completed subjective check-in. Total signal coverage is currently '
+            '${(activeWeightSum * 100).round()}%, below the 35% minimum threshold.',
+        componentScores: componentScores,
+        componentWeights: {},
+        availableSignals: availableSignals,
+        missingSignals: missingSignals,
+        baselineRhr: baselineRhr,
+        todayRhr: todayRhr,
+        rhrObservationsCount: rhrObservationsCount,
+        sleepMinutes: sleepSession?.totalMinutes,
+        sleepTargetMinutes: (sleepTargetHours * 60).round(),
+        checkIn: checkIn,
+        yesterdayStrain: yesterdayStrain,
+      );
+    }
+
+    // Re-normalize weights to 1.0 (100%)
+    final Map<String, double> normalizedWeights = {};
+    double weightedScoreSum = 0.0;
+
+    for (final entry in rawWeights.entries) {
+      final normalizedWeight = entry.value / activeWeightSum;
+      normalizedWeights[entry.key] = normalizedWeight;
+      weightedScoreSum += (componentScores[entry.key]! * normalizedWeight);
+    }
+
+    final int finalScore = weightedScoreSum.round().clamp(1, 99);
+
+    // Determine category
+    final RecoveryCategory category;
+    if (finalScore >= 67) {
+      category = RecoveryCategory.ready;
+    } else if (finalScore >= 34) {
+      category = RecoveryCategory.moderate;
+    } else {
+      category = RecoveryCategory.restRecommended;
+    }
+
+    // Determine confidence level based on raw coverage percentage
+    final ConfidenceLevel confidence;
+    if (activeWeightSum >= 0.85) {
+      confidence = ConfidenceLevel.high;
+    } else if (activeWeightSum >= 0.50) {
+      confidence = ConfidenceLevel.moderate;
+    } else {
+      confidence = ConfidenceLevel.low;
+    }
+
+    // Explanations
+    final String shortExplanation = _buildShortExplanation(
+      category: category,
+      componentScores: componentScores,
+      baselineRhr: baselineRhr,
+      todayRhr: todayRhr,
+    );
+
+    final String detailedExplanation = _buildDetailedExplanation(
+      category: category,
+      score: finalScore,
+      coveragePercent: (activeWeightSum * 100).round(),
+      availableSignals: availableSignals,
+      missingSignals: missingSignals,
+    );
+
+    return RecoveryResult(
+      score: finalScore,
+      category: category,
+      confidence: confidence,
+      shortExplanation: shortExplanation,
+      detailedExplanation: detailedExplanation,
+      componentScores: componentScores,
+      componentWeights: normalizedWeights,
+      availableSignals: availableSignals,
+      missingSignals: missingSignals,
+      baselineRhr: baselineRhr,
+      todayRhr: todayRhr,
+      rhrObservationsCount: rhrObservationsCount,
+      sleepMinutes: sleepSession?.totalMinutes,
+      sleepTargetMinutes: (sleepTargetHours * 60).round(),
+      checkIn: checkIn,
+      yesterdayStrain: yesterdayStrain,
+    );
+  }
+
+  /// Calculates sleep component score (0-100) based on target ratio.
+  /// Does not reward implausible oversleeping without limit.
+  static double calculateSleepScore({
+    required int actualMinutes,
+    required double targetHours,
+  }) {
+    final targetMinutes = (targetHours * 60).clamp(240, 720).toDouble();
+    if (targetMinutes <= 0) return 70.0;
+
+    final ratio = actualMinutes / targetMinutes;
+
+    if (ratio <= 0.4) {
+      // Under 40% of target (e.g. <3.2h for 8h): severe sleep deficit
+      return (ratio / 0.4 * 30.0).clamp(5.0, 30.0);
+    } else if (ratio < 1.0) {
+      // 40% to 100% of target: linear progression from 30 to 95
+      final progress = (ratio - 0.4) / 0.6;
+      return 30.0 + (progress * 65.0);
+    } else if (ratio <= 1.15) {
+      // 100% to 115% of target: optimal sweet spot (95 to 100)
+      final bonus = (ratio - 1.0) / 0.15;
+      return 95.0 + (bonus * 5.0);
+    } else {
+      // Oversleeping (>115%): slight penalty for lethargy / prolonged bed rest
+      // At 140% target (e.g. 11.2h), drops to ~85. Does not collapse, but plateaus.
+      final excess = ratio - 1.15;
+      final penalty = excess * 40.0;
+      return (100.0 - penalty).clamp(70.0, 100.0);
+    }
+  }
+
+  /// Calculates resting heart rate recovery score (0-100) relative to personal baseline.
+  static double calculateRhrScore({
+    required double todayRhr,
+    required double baselineRhr,
+  }) {
+    final delta = todayRhr - baselineRhr;
+
+    if (delta <= -3.0) {
+      // Significantly below baseline indicates strong autonomic recovery
+      return 100.0;
+    } else if (delta <= 0.0) {
+      // At or slightly below baseline (88 to 98)
+      return 90.0 - (delta * 3.0);
+    } else if (delta <= 5.0) {
+      // Slightly elevated (e.g. +1 to +5 bpm): mild autonomic stress (65 to 85)
+      return 85.0 - (delta * 4.0);
+    } else if (delta <= 10.0) {
+      // Moderately elevated (+6 to +10 bpm): significant fatigue (35 to 60)
+      return 65.0 - ((delta - 5.0) * 6.0);
+    } else {
+      // Severely elevated (+10+ bpm): poor recovery, possible illness or overtraining (10 to 30)
+      final score = 35.0 - ((delta - 10.0) * 3.0);
+      return score.clamp(5.0, 35.0);
+    }
+  }
+
+  /// Calculates recent training load score (0-100) based on yesterday's strain.
+  static double calculateStrainRecoveryScore(double yesterdayStrain) {
+    if (yesterdayStrain <= 6.0) {
+      // Rest or active recovery day
+      return 95.0;
+    } else if (yesterdayStrain <= 11.0) {
+      // Moderate aerobic load
+      return 82.0;
+    } else if (yesterdayStrain <= 15.0) {
+      // High training load
+      return 68.0;
+    } else {
+      // All-out intense exertion
+      return 45.0;
+    }
+  }
+
+  /// Normalizes energy rating (1-10) to 0-100.
+  static double calculateEnergyScore(int energy) {
+    final clamped = energy.clamp(1, 10);
+    return ((clamped - 1) / 9.0) * 100.0;
+  }
+
+  /// Normalizes muscle soreness rating (0-10) to 0-100 (inverted: 0 soreness = 100 score).
+  static double calculateSorenessScore(int soreness) {
+    final clamped = soreness.clamp(0, 10);
+    return ((10 - clamped) / 10.0) * 100.0;
+  }
+
+  /// Normalizes fatigue rating (0-10) to 0-100 (inverted: 0 fatigue = 100 score).
+  static double calculateFatigueScore(int fatigue) {
+    final clamped = fatigue.clamp(0, 10);
+    return ((10 - clamped) / 10.0) * 100.0;
+  }
+
+  /// Computes personal baseline RHR from historical observations.
+  /// Requires at least [minRhrBaselineObservations] valid samples.
+  static double? _computeRhrBaseline(List<double> historicalRhrs) {
+    final valid = historicalRhrs.where((r) => r >= 35 && r <= 150).toList();
+    if (valid.length < minRhrBaselineObservations) {
+      return null;
+    }
+    // Simple 7-day moving average (or up to 14 days)
+    final recent = valid.length > 14 ? valid.sublist(valid.length - 14) : valid;
+    final sum = recent.fold(0.0, (a, b) => a + b);
+    return sum / recent.length;
+  }
+
+  static String _buildShortExplanation({
+    required RecoveryCategory category,
+    required Map<String, double> componentScores,
+    required double? baselineRhr,
+    required double? todayRhr,
+  }) {
+    switch (category) {
+      case RecoveryCategory.ready:
+        if (todayRhr != null &&
+            baselineRhr != null &&
+            todayRhr <= baselineRhr) {
+          return 'Cardiovascular indicators and rest duration show optimal readiness for high-intensity training.';
+        }
+        return 'Sufficient rest and subjective vitality indicate your body is ready for productive training load.';
+      case RecoveryCategory.moderate:
+        return 'Balanced recovery profile. Suitable for aerobic maintenance, strength progression, or technique drills.';
+      case RecoveryCategory.restRecommended:
+        if (todayRhr != null &&
+            baselineRhr != null &&
+            todayRhr > baselineRhr + 4) {
+          return 'Elevated resting heart rate and cumulative fatigue suggest prioritising active recovery or sleep.';
+        }
+        return 'Restorative recovery needed. Low sleep or elevated fatigue indicates higher vulnerability to overtraining.';
+      case RecoveryCategory.notEnoughData:
+        return 'Sync sleep or complete your morning check-in to establish recovery.';
+    }
+  }
+
+  static String _buildDetailedExplanation({
+    required RecoveryCategory category,
+    required int score,
+    required int coveragePercent,
+    required List<String> availableSignals,
+    required List<String> missingSignals,
+  }) {
+    final buffer = StringBuffer();
+    buffer.write(
+      'Recovery estimate of $score/100 derived from $coveragePercent% available telemetry signals. ',
+    );
+
+    if (missingSignals.isNotEmpty) {
+      buffer.write(
+        'Missing signals (${missingSignals.length}) were excluded and remaining weights were re-normalized to 100%. ',
+      );
+    }
+
+    buffer.write(
+      'This heuristic model does not infer or require HRV and works with any compatible Health Connect source.',
+    );
+
+    return buffer.toString();
+  }
+}
