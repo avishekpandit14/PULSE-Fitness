@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../../data/repositories/health_repository.dart';
+import '../../domain/algorithms/nighttime_heart_rate_analyzer.dart';
+import '../../domain/algorithms/sleep_quality_analyzer.dart';
 import '../../domain/models/checkin_model.dart';
 import '../../domain/models/heart_rate_sample.dart';
 import '../../domain/models/metric_status_model.dart';
@@ -17,6 +19,9 @@ class HealthProvider extends ChangeNotifier {
   StrainResult? _strain;
   RecommendationResult? _recommendation;
   SleepSessionModel? _sleepSession;
+  SleepNightReport _sleepNight = SleepNightReport.empty;
+  SleepQualityResult? _sleepQuality;
+  NighttimeHeartRateAnalysis? _nightHeartRate;
   double? _todayRhr;
   List<HeartRateSample> _hrSamples = [];
   int _steps = 0;
@@ -37,6 +42,11 @@ class HealthProvider extends ChangeNotifier {
   StrainResult? get strain => _strain;
   RecommendationResult? get recommendation => _recommendation;
   SleepSessionModel? get sleepSession => _sleepSession;
+
+  /// Primary nighttime session plus separately tracked naps.
+  SleepNightReport get sleepNight => _sleepNight;
+  SleepQualityResult? get sleepQuality => _sleepQuality;
+  NighttimeHeartRateAnalysis? get nightHeartRate => _nightHeartRate;
   double? get todayRhr => _todayRhr;
   List<HeartRateSample> get hrSamples => _hrSamples;
   int get steps => _steps;
@@ -71,6 +81,9 @@ class HealthProvider extends ChangeNotifier {
       _strain = data.strain;
       _recommendation = data.recommendation;
       _sleepSession = data.sleepSession;
+      _sleepNight = data.sleepNight;
+      _sleepQuality = data.sleepQuality;
+      _nightHeartRate = data.nightHeartRate;
       _todayRhr = data.todayRhr;
       _hrSamples = data.hrSamples;
       _steps = data.steps;

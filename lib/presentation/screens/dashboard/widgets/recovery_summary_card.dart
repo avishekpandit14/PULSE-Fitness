@@ -92,6 +92,14 @@ class RecoverySummaryCard extends StatelessWidget {
                   isActive: true,
                   color: AppColors.sleepCyan,
                 ),
+              if (recovery?.sleepQuality?.isAvailable == true)
+                _buildSignalPill(
+                  label:
+                      'Sleep Quality: '
+                      '${recovery!.sleepQuality!.score!.round()}/100',
+                  isActive: true,
+                  color: AppColors.sleepCyan,
+                ),
             ],
           ),
         ],

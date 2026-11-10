@@ -104,6 +104,10 @@ void main() {
           startTime: DateTime.now().subtract(const Duration(hours: 8)),
           endTime: DateTime.now(),
           totalMinutes: 490, // ~8.16 hours
+          deepMinutes: 90,
+          lightMinutes: 250,
+          remMinutes: 110,
+          awakeMinutes: 30,
           targetMinutes: 480,
         );
 
@@ -136,10 +140,12 @@ void main() {
         expect(result.category, equals(RecoveryCategory.ready));
         expect(result.confidence, equals(ConfidenceLevel.high));
         expect(result.missingSignals, isEmpty);
+        // Duration, Quality, RHR, Strain, Check-in
+        expect(result.availableSignals.length, equals(5));
         expect(
-          result.availableSignals.length,
-          equals(4),
-        ); // Sleep, RHR, Strain, Check-in
+          result.availableSignals.any((s) => s.contains('Sleep Quality')),
+          isTrue,
+        );
       },
     );
 

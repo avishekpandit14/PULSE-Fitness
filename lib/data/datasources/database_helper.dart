@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -35,6 +35,14 @@ class DatabaseHelper {
       );
       await db.execute(
         "ALTER TABLE daily_summaries ADD COLUMN data_quality TEXT NOT NULL DEFAULT 'measured'",
+      );
+    }
+    if (oldVersion < 3) {
+      // Nightly average heart rate, used as the personal nighttime HR baseline.
+      // Kept separate from rhr_history so a nighttime average is never confused
+      // with a resting heart rate reading.
+      await db.execute(
+        'ALTER TABLE daily_summaries ADD COLUMN night_hr_avg REAL',
       );
     }
   }
@@ -109,7 +117,8 @@ class DatabaseHelper {
         active_calories INTEGER,
         updated_at TEXT,
         source TEXT NOT NULL DEFAULT 'local',
-        data_quality TEXT NOT NULL DEFAULT 'measured'
+        data_quality TEXT NOT NULL DEFAULT 'measured',
+        night_hr_avg REAL
       )
     ''');
   }
@@ -240,6 +249,7 @@ class DatabaseHelper {
     required int? activeCalories,
     required String source,
     required String dataQuality,
+    double? nightHrAvg,
   }) async {
     final db = await database;
     await db.insert('daily_summaries', {
@@ -252,7 +262,31 @@ class DatabaseHelper {
       'updated_at': DateTime.now().toIso8601String(),
       'source': source,
       'data_quality': dataQuality,
+      'night_hr_avg': nightHrAvg,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Historical nightly average heart rates (oldest first), excluding the day
+  /// being computed so a night never contributes to its own baseline.
+  Future<List<double>> getHistoricalNightlyHrAverages({
+    int limit = 14,
+    String? excludeDateKey,
+  }) async {
+    final db = await database;
+    final maps = await db.query(
+      'daily_summaries',
+      columns: ['night_hr_avg'],
+      where: excludeDateKey == null
+          ? 'night_hr_avg IS NOT NULL'
+          : 'night_hr_avg IS NOT NULL AND date_key != ?',
+      whereArgs: excludeDateKey == null ? null : [excludeDateKey],
+      orderBy: 'date_key DESC',
+      limit: limit,
+    );
+    return maps.reversed
+        .map((m) => (m['night_hr_avg'] as num?)?.toDouble())
+        .whereType<double>()
+        .toList();
   }
 
   Future<List<Map<String, dynamic>>> getRecentDailySummaries({

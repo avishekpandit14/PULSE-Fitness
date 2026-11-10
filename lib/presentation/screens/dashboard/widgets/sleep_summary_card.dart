@@ -9,11 +9,17 @@ class SleepSummaryCard extends StatelessWidget {
   final double targetHours;
   final VoidCallback onTap;
 
+  /// Naps are reported separately and never included in the sleep score.
+  final List<SleepNap> naps;
+  final int napMinutes;
+
   const SleepSummaryCard({
     super.key,
     required this.sleepSession,
     required this.targetHours,
     required this.onTap,
+    this.naps = const [],
+    this.napMinutes = 0,
   });
 
   @override
@@ -52,7 +58,8 @@ class SleepSummaryCard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (sleepSession!.dataQuality != SleepDataQuality.measured) ...[
+              if (sleepSession != null &&
+                  sleepSession!.dataQuality != SleepDataQuality.measured) ...[
                 const SizedBox(height: 8),
                 Text(
                   sleepSession!.dataQuality == SleepDataQuality.partial
@@ -135,26 +142,60 @@ class SleepSummaryCard extends StatelessWidget {
               children: [
                 _buildStageTile(
                   'Deep',
-                  sleepSession!.deepMinutes ?? 0,
+                  sleepSession!.deepMinutes,
                   AppColors.sleepCyan,
                 ),
                 _buildStageTile(
                   'Light',
-                  sleepSession!.lightMinutes ?? 0,
+                  sleepSession!.lightMinutes,
                   Colors.blueAccent,
                 ),
                 _buildStageTile(
                   'REM',
-                  sleepSession!.remMinutes ?? 0,
+                  sleepSession!.remMinutes,
                   Colors.purpleAccent,
                 ),
                 _buildStageTile(
                   'Awake',
-                  sleepSession!.awakeMinutes ?? 0,
+                  sleepSession!.awakeMinutes,
                   AppColors.textSecondary,
                 ),
               ],
             ),
+            if (naps.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceElevated,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.self_improvement_rounded,
+                      size: 14,
+                      color: AppColors.sleepCyan,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${naps.length} nap${naps.length == 1 ? '' : 's'} '
+                        'totalling ${napMinutes}m — tracked separately, not '
+                        'added to your night score',
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (sleepSession!.consistencyScore != null) ...[
               const SizedBox(height: 12),
               Container(
@@ -227,8 +268,7 @@ class SleepSummaryCard extends StatelessWidget {
     );
   }
 
-  Widget _buildStageTile(String label, int minutes, Color color) {
-    final hrs = minutes / 60.0;
+  Widget _buildStageTile(String label, int? minutes, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -245,7 +285,8 @@ class SleepSummaryCard extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          '${hrs.toStringAsFixed(1)}h',
+          // An unreported stage is shown as unavailable, never as 0.0h.
+          minutes == null ? '—' : '${(minutes / 60.0).toStringAsFixed(1)}h',
           style: const TextStyle(
             color: AppColors.textPrimary,
             fontSize: 13,

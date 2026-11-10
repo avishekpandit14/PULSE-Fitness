@@ -194,20 +194,30 @@ class HealthConnectService {
 
   /// Fetches heart-rate samples from today (with fallback to last 24 hours).
   Future<List<HeartRateSample>> fetchTodayHeartRateSamples() async {
+    final now = DateTime.now();
+    return fetchHeartRateSamples(
+      start: now.subtract(const Duration(hours: 24)),
+      end: now,
+    );
+  }
+
+  /// Fetches continuous heart rate samples inside an explicit window. Used to
+  /// slice the primary sleep window for nighttime HR analysis.
+  Future<List<HeartRateSample>> fetchHeartRateSamples({
+    required DateTime start,
+    required DateTime end,
+  }) async {
     if (!Platform.isAndroid) {
       return [];
     }
 
     await _ensureConfigured();
 
-    final now = DateTime.now();
-    final startTime = now.subtract(const Duration(hours: 24));
-
     try {
       final points = await _health.getHealthDataFromTypes(
         types: [HealthDataType.HEART_RATE],
-        startTime: startTime,
-        endTime: now,
+        startTime: start,
+        endTime: end,
       );
 
       final samples = <HeartRateSample>[];
@@ -279,35 +289,24 @@ class HealthConnectService {
     }
   }
 
-  /// Fetches the nocturnal sleep session, preventing 24+ hour reporting
-  /// by isolating last night's session and computing actual stage durations.
-  Future<SleepSessionModel?> fetchTodaySleepSession({
+  /// Fetches last night's sleep, split into the primary nighttime session and
+  /// any naps that were also recorded.
+  ///
+  /// Naps are reported separately and never replace the primary session.
+  Future<SleepNightReport> fetchSleepNight({
     required double targetHours,
   }) async {
-    if (!Platform.isAndroid) return null;
+    if (!Platform.isAndroid) return SleepNightReport.empty;
     await _ensureConfigured();
 
     final now = DateTime.now();
-    // Look back up to 24 hours to find last night's sleep
-    final startTime = now.subtract(const Duration(hours: 24));
+    final windowStart = now.subtract(const Duration(hours: 24));
 
     try {
-      final points = await _health.getHealthDataFromTypes(
-        types: [
-          HealthDataType.SLEEP_SESSION,
-          HealthDataType.SLEEP_ASLEEP,
-          HealthDataType.SLEEP_AWAKE,
-          HealthDataType.SLEEP_DEEP,
-          HealthDataType.SLEEP_LIGHT,
-          HealthDataType.SLEEP_REM,
-        ],
-        startTime: startTime,
-        endTime: now,
-      );
+      final points = await _fetchSleepPoints(start: windowStart, end: now);
+      if (points.isEmpty) return SleepNightReport.empty;
 
-      if (points.isEmpty) return null;
-
-      final recordKinds = <HealthDataType, SleepRecordKind>{
+      const recordKinds = <HealthDataType, SleepRecordKind>{
         HealthDataType.SLEEP_SESSION: SleepRecordKind.session,
         HealthDataType.SLEEP_ASLEEP: SleepRecordKind.asleep,
         HealthDataType.SLEEP_DEEP: SleepRecordKind.deep,
@@ -315,6 +314,7 @@ class HealthConnectService {
         HealthDataType.SLEEP_REM: SleepRecordKind.rem,
         HealthDataType.SLEEP_AWAKE: SleepRecordKind.awake,
       };
+
       final records = points
           .where((point) => recordKinds.containsKey(point.type))
           .map(
@@ -326,221 +326,94 @@ class HealthConnectService {
             ),
           )
           .toList();
-      final processed = SleepDataProcessor.process(records: records, now: now);
-      if (processed == null) return null;
 
-      final dateKey =
-          '${processed.session.end.year.toString().padLeft(4, '0')}-${processed.session.end.month.toString().padLeft(2, '0')}-${processed.session.end.day.toString().padLeft(2, '0')}';
-      return SleepSessionModel(
-        id: 'hc_sleep_${processed.session.start.millisecondsSinceEpoch}',
-        dateKey: dateKey,
-        startTime: processed.session.start,
-        endTime: processed.session.end,
-        totalMinutes: processed.totalMinutes,
-        deepMinutes: processed.deepMinutes,
-        lightMinutes: processed.lightMinutes,
-        remMinutes: processed.remMinutes,
-        awakeMinutes: processed.awakeMinutes,
-        targetMinutes: (targetHours * 60).round(),
-        dataQuality: processed.dataQuality,
-        unknownMinutes: processed.unknownMinutes,
+      final night = SleepDataProcessor.processNight(records: records, now: now);
+      if (night == null) return SleepNightReport.empty;
+
+      return SleepNightReport(
+        primary: _toSleepSessionModel(night.primary, targetHours: targetHours),
+        naps: night.naps
+            .map(
+              (nap) => SleepNap(
+                startTime: nap.start,
+                endTime: nap.end,
+                minutes: nap.minutes,
+              ),
+            )
+            .toList(),
+        napMinutes: night.napMinutes,
+        primaryIsNighttime: night.primaryIsNighttime,
       );
-
-      /* 1. Separate full sessions from stages
-      final sessions =
-          points
-              .where(
-                (p) =>
-                    p.type == HealthDataType.SLEEP_SESSION &&
-                    p.dateTo.isAfter(p.dateFrom),
-              )
-              .toList()
-            ..sort((a, b) => b.dateTo.compareTo(a.dateTo));
-
-      // Separate individual stage records
-      final stagePoints = points
-          .where((p) => p.type != HealthDataType.SLEEP_SESSION)
-          .toList();
-
-      if (sessions.isNotEmpty) {
-        // Find the primary sleep session that ended recently (within last 16 hours)
-        final primarySession = sessions.firstWhere(
-          (s) => s.dateTo.isAfter(now.subtract(const Duration(hours: 16))),
-          orElse: () => sessions.first,
-        );
-
-        final rawMinutes = primarySession.dateTo
-            .difference(primarySession.dateFrom)
-            .inMinutes;
-
-        // Extract stages falling within or near this session
-        final sessionStages = stagePoints.where((p) {
-          return !p.dateTo.isBefore(
-                primarySession.dateFrom.subtract(const Duration(minutes: 30)),
-              ) &&
-              !p.dateFrom.isAfter(
-                primarySession.dateTo.add(const Duration(minutes: 30)),
-              );
-        }).toList();
-
-        int deepMins = 0;
-        int lightMins = 0;
-        int remMins = 0;
-        int awakeMins = 0;
-
-        for (final sp in sessionStages) {
-          final dur = sp.dateTo.difference(sp.dateFrom).inMinutes;
-          if (dur <= 0) continue;
-          switch (sp.type) {
-            case HealthDataType.SLEEP_DEEP:
-              deepMins += dur;
-              break;
-            case HealthDataType.SLEEP_LIGHT:
-              lightMins += dur;
-              break;
-            case HealthDataType.SLEEP_REM:
-              remMins += dur;
-              break;
-            case HealthDataType.SLEEP_AWAKE:
-              awakeMins += dur;
-              break;
-            default:
-              break;
-          }
-        }
-
-        final stagesTotalSleep = deepMins + lightMins + remMins;
-        int effectiveTotalMinutes;
-
-        // If stages exist, the true asleep time is the sum of deep + light + rem
-        // This directly fixes cases where an unclosed session reports 24+ hours
-        if (stagesTotalSleep > 0 && stagesTotalSleep <= 14 * 60) {
-          effectiveTotalMinutes = stagesTotalSleep;
-        } else if (rawMinutes > 0 && rawMinutes <= 14 * 60) {
-          // If raw session is realistic (under 14 hours), subtract awake minutes if known
-          effectiveTotalMinutes = (rawMinutes - awakeMins).clamp(60, 14 * 60);
-        } else {
-          // If session was unclosed/abnormally long (>14 hours, e.g. 24.6h):
-          // Bound strictly to a realistic sleep duration (max 10h)
-          effectiveTotalMinutes = (targetHours * 60).round().clamp(360, 600);
-        }
-
-        final dateKey =
-            '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-
-        return SleepSessionModel(
-          id: 'hc_sleep_${primarySession.dateFrom.millisecondsSinceEpoch}',
-          dateKey: dateKey,
-          startTime: primarySession.dateFrom,
-          endTime: primarySession.dateTo,
-          totalMinutes: effectiveTotalMinutes,
-          deepMinutes: deepMins > 0 ? deepMins : null,
-          lightMinutes: lightMins > 0 ? lightMins : null,
-          remMinutes: remMins > 0 ? remMins : null,
-          awakeMinutes: awakeMins > 0 ? awakeMins : null,
-          targetMinutes: (targetHours * 60).round(),
-        );
-      }
-
-      // 2. If no parent SLEEP_SESSION record, cluster nocturnal stages
-      final asleepTypes = {
-        HealthDataType.SLEEP_ASLEEP,
-        HealthDataType.SLEEP_DEEP,
-        HealthDataType.SLEEP_LIGHT,
-        HealthDataType.SLEEP_REM,
-      };
-
-      final intervals =
-          stagePoints
-              .where(
-                (p) =>
-                    asleepTypes.contains(p.type) &&
-                    p.dateTo.isAfter(p.dateFrom),
-              )
-              .toList()
-            ..sort((a, b) => a.dateFrom.compareTo(b.dateFrom));
-
-      if (intervals.isEmpty) return null;
-
-      // Cluster intervals: find the latest night's cluster (gaps < 90 mins)
-      final clusters = <List<HealthDataPoint>>[];
-      List<HealthDataPoint> currentCluster = [intervals.first];
-
-      for (int i = 1; i < intervals.length; i++) {
-        final prev = intervals[i - 1];
-        final curr = intervals[i];
-        if (curr.dateFrom.difference(prev.dateTo).inMinutes < 90) {
-          currentCluster.add(curr);
-        } else {
-          clusters.add(currentCluster);
-          currentCluster = [curr];
-        }
-      }
-      clusters.add(currentCluster);
-
-      // Choose the latest cluster (last night's sleep)
-      final primaryCluster = clusters.last;
-      int clusterDeep = 0;
-      int clusterLight = 0;
-      int clusterRem = 0;
-      int clusterAwake = 0;
-      int clusterTotal = 0;
-
-      for (final p in primaryCluster) {
-        final dur = p.dateTo.difference(p.dateFrom).inMinutes;
-        if (dur <= 0) continue;
-        clusterTotal += dur;
-        switch (p.type) {
-          case HealthDataType.SLEEP_DEEP:
-            clusterDeep += dur;
-            break;
-          case HealthDataType.SLEEP_LIGHT:
-            clusterLight += dur;
-            break;
-          case HealthDataType.SLEEP_REM:
-            clusterRem += dur;
-            break;
-          default:
-            break;
-        }
-      }
-
-      // Check awake records matching cluster window
-      final clusterStart = primaryCluster.first.dateFrom;
-      final clusterEnd = primaryCluster.last.dateTo;
-      for (final p in stagePoints.where(
-        (p) => p.type == HealthDataType.SLEEP_AWAKE,
-      )) {
-        if (!p.dateTo.isBefore(clusterStart) &&
-            !p.dateFrom.isAfter(clusterEnd)) {
-          clusterAwake += p.dateTo.difference(p.dateFrom).inMinutes;
-        }
-      }
-
-      // Clamp cluster duration to a maximum of 14 hours
-      final clampedTotal = (clusterDeep + clusterLight + clusterRem > 0)
-          ? (clusterDeep + clusterLight + clusterRem)
-          : clusterTotal.clamp(60, 14 * 60);
-
-      final dateKey =
-          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-
-      return SleepSessionModel(
-        id: 'hc_sleep_${clusterStart.millisecondsSinceEpoch}',
-        dateKey: dateKey,
-        startTime: clusterStart,
-        endTime: clusterEnd,
-        totalMinutes: clampedTotal,
-        deepMinutes: clusterDeep > 0 ? clusterDeep : null,
-        lightMinutes: clusterLight > 0 ? clusterLight : null,
-        remMinutes: clusterRem > 0 ? clusterRem : null,
-        awakeMinutes: clusterAwake > 0 ? clusterAwake : null,
-        targetMinutes: (targetHours * 60).round(),
-      ); */
     } catch (e) {
-      debugPrint('Error fetching sleep session: $e');
-      return null;
+      debugPrint('Error fetching sleep night: $e');
+      return SleepNightReport.empty;
     }
+  }
+
+  /// Queries all sleep types at once, then falls back to one type at a time so
+  /// that a single unauthorised or unsupported stage type cannot hide the
+  /// sessions that *are* available.
+  Future<List<HealthDataPoint>> _fetchSleepPoints({
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    const types = <HealthDataType>[
+      HealthDataType.SLEEP_SESSION,
+      HealthDataType.SLEEP_ASLEEP,
+      HealthDataType.SLEEP_AWAKE,
+      HealthDataType.SLEEP_DEEP,
+      HealthDataType.SLEEP_LIGHT,
+      HealthDataType.SLEEP_REM,
+    ];
+
+    try {
+      return await _health.getHealthDataFromTypes(
+        types: types,
+        startTime: start,
+        endTime: end,
+      );
+    } catch (e) {
+      debugPrint('Health Connect combined sleep query failed: $e');
+    }
+
+    final collected = <HealthDataPoint>[];
+    for (final type in types) {
+      try {
+        collected.addAll(
+          await _health.getHealthDataFromTypes(
+            types: [type],
+            startTime: start,
+            endTime: end,
+          ),
+        );
+      } catch (e) {
+        debugPrint('Health Connect $type unavailable: $e');
+      }
+    }
+    return collected;
+  }
+
+  SleepSessionModel _toSleepSessionModel(
+    ProcessedSleepData processed, {
+    required double targetHours,
+  }) {
+    final end = processed.session.end;
+    final dateKey =
+        '${end.year.toString().padLeft(4, '0')}-${end.month.toString().padLeft(2, '0')}-${end.day.toString().padLeft(2, '0')}';
+    return SleepSessionModel(
+      id: 'hc_sleep_${processed.session.start.millisecondsSinceEpoch}',
+      dateKey: dateKey,
+      startTime: processed.session.start,
+      endTime: processed.session.end,
+      totalMinutes: processed.totalMinutes,
+      deepMinutes: processed.deepMinutes,
+      lightMinutes: processed.lightMinutes,
+      remMinutes: processed.remMinutes,
+      awakeMinutes: processed.awakeMinutes,
+      targetMinutes: (targetHours * 60).round(),
+      dataQuality: processed.dataQuality,
+      unknownMinutes: processed.unknownMinutes,
+    );
   }
 
   /// Fetches workouts recorded in Health Connect
@@ -700,16 +573,33 @@ class HealthConnectService {
     );
 
     // 4. Sleep Session
-    final sleep = await fetchTodaySleepSession(targetHours: 8.0);
+    final sleepNight = await fetchSleepNight(targetHours: 8.0);
+    final sleep = sleepNight.primary;
+    final hasSleep = sleep != null && sleep.totalMinutes > 0;
     MetricSyncStatus sleepStatus;
     if (!isAvailable) {
       sleepStatus = MetricSyncStatus.unsupported;
     } else if (!hasPerm) {
       sleepStatus = MetricSyncStatus.permissionRequired;
-    } else if (sleep != null) {
+    } else if (hasSleep) {
       sleepStatus = MetricSyncStatus.available;
     } else {
       sleepStatus = MetricSyncStatus.noDataFound;
+    }
+
+    final napNote = sleepNight.napMinutes > 0
+        ? ' Naps tracked separately: ${sleepNight.napMinutes}m (not part of '
+              'the night score).'
+        : '';
+    String? sleepExplanation;
+    if (hasSleep) {
+      String stage(int? minutes) =>
+          minutes == null ? 'unavailable' : '${minutes}m';
+      sleepExplanation =
+          'Nighttime sleep verified: ${sleep.hours.toStringAsFixed(1)} hrs '
+          '(Deep: ${stage(sleep.deepMinutes)}, Light: '
+          '${stage(sleep.lightMinutes)}, REM: ${stage(sleep.remMinutes)}).'
+          '$napNote';
     }
 
     metrics.add(
@@ -719,13 +609,11 @@ class HealthConnectService {
         description:
             'Nocturnal duration and hypnogram sleep stages (Deep, Light, REM).',
         status: sleepStatus,
-        lastValue: sleep != null
-            ? '${sleep.hours.toStringAsFixed(1)} hrs'
-            : null,
+        lastValue: hasSleep ? '${sleep.hours.toStringAsFixed(1)} hrs' : null,
         lastSyncedAt: sleep?.endTime,
-        explanation: sleep != null
-            ? 'Sleep session verified: ${sleep.hours.toStringAsFixed(1)} hrs recorded (Deep: ${sleep.deepMinutes ?? 0}m, Light: ${sleep.lightMinutes ?? 0}m, REM: ${sleep.remMinutes ?? 0}m).'
-            : 'No sleep record detected for last night. Wear your tracker and sync its companion app to Health Connect.',
+        explanation:
+            sleepExplanation ??
+            'No sleep record detected for last night. Wear your tracker and sync its companion app to Health Connect.',
       ),
     );
 

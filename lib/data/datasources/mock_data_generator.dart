@@ -7,7 +7,9 @@ import '../../domain/models/workout_model.dart';
 /// Provides realistic athletic telemetry for Demo Mode testing.
 /// Clearly labeled as synthetic data across the UI.
 class MockDataGenerator {
-  static final DateTime _now = DateTime.now();
+  // Resolved on every access so a session left open across midnight does not
+  // keep reporting yesterday's synthetic window.
+  static DateTime get _now => DateTime.now();
 
   static SleepSessionModel getMockSleepSession({double targetHours = 8.0}) {
     final dateKey =
@@ -35,6 +37,65 @@ class MockDataGenerator {
       consistencyScore: 89.0,
     );
   }
+
+  /// Synthetic night: primary overnight sleep plus an afternoon nap, so the
+  /// demo exercises nap separation without touching the primary score.
+  static SleepNightReport getMockSleepNight({double targetHours = 8.0}) {
+    final now = _now;
+    final napStart = DateTime(now.year, now.month, now.day, 14, 5);
+    final napEnd = napStart.add(const Duration(minutes: 90));
+    final naps = now.isAfter(napEnd)
+        ? <SleepNap>[
+            SleepNap(startTime: napStart, endTime: napEnd, minutes: 90),
+          ]
+        : const <SleepNap>[];
+
+    return SleepNightReport(
+      primary: getMockSleepSession(targetHours: targetHours),
+      naps: naps,
+      napMinutes: naps.fold(0, (sum, nap) => sum + nap.minutes),
+      primaryIsNighttime: true,
+    );
+  }
+
+  /// Deterministic nighttime heart rate stream inside the sleep window.
+  /// A gentle downward trend with two brief arousals - no HRV is fabricated.
+  static List<HeartRateSample> getMockNightHeartRateSamples({
+    required DateTime startTime,
+    required DateTime endTime,
+  }) {
+    const stepMinutes = 5;
+    const ripple = [0, 1, -1, 2, 0, -2, 1, 0, -1, 1];
+    final totalMinutes = endTime.difference(startTime).inMinutes;
+    if (totalMinutes <= 0) return const [];
+
+    final samples = <HeartRateSample>[];
+    for (var offset = 0; offset <= totalMinutes; offset += stepMinutes) {
+      final progress = offset / totalMinutes;
+      final base = 62.0 - progress * 9.0;
+      final wobble = ripple[(offset ~/ stepMinutes) % ripple.length].toDouble();
+      final arousal =
+          (progress > 0.35 && progress < 0.40) ||
+              (progress > 0.72 && progress < 0.76)
+          ? 8.0
+          : 0.0;
+      samples.add(
+        HeartRateSample(
+          timestamp: startTime.add(Duration(minutes: offset)),
+          bpm: (base + wobble + arousal).round(),
+        ),
+      );
+    }
+    return samples;
+  }
+
+  static List<double> getMockNightlyHrAverages() => [
+    59.0,
+    58.0,
+    60.0,
+    57.0,
+    58.5,
+  ];
 
   static double getMockTodayRhr() => 56.0;
 

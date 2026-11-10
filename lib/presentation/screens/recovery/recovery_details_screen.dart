@@ -112,6 +112,82 @@ class RecoveryDetailsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
 
+            // What moved the score
+            if (recovery != null && recovery.factors.isNotEmpty) ...[
+              const SectionHeader(
+                title: 'What Moved Your Score',
+                subtitle: 'Contribution of each signal, in score points',
+              ),
+              const SizedBox(height: 8),
+              PulseCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ...recovery.factors.map((factor) {
+                      final positive = factor.isPositive;
+                      final color = positive
+                          ? AppColors.readyGreen
+                          : AppColors.restCoral;
+                      final sign = factor.impactPoints >= 0 ? '+' : '';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              positive
+                                  ? Icons.trending_up_rounded
+                                  : Icons.trending_down_rounded,
+                              size: 16,
+                              color: color,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    factor.name,
+                                    style: AppTypography.titleSmall,
+                                  ),
+                                  if (factor.detail.isNotEmpty)
+                                    Text(
+                                      factor.detail,
+                                      style: AppTypography.bodySmall.copyWith(
+                                        color: AppColors.textSecondary,
+                                        height: 1.35,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              '$sign${factor.impactPoints.toStringAsFixed(1)}',
+                              style: TextStyle(
+                                color: color,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    Text(
+                      'Impacts are measured against a neutral 50/100 reading and '
+                      'sum to roughly your score minus 50. Naps are shown in the '
+                      'sleep screen only and never change this number.',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textTertiary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+
             // Component Breakdown
             const SectionHeader(
               title: 'Telemetry Component Breakdown',
@@ -371,6 +447,9 @@ class RecoveryDetailsScreen extends StatelessWidget {
                   Text(
                     'PULSE uses a deterministic, transparent formula for Health Connect-compatible trackers, '
                     'including devices that do not expose nocturnal HRV (RMSSD/SDNN). '
+                    'Sleep duration and sleep quality are scored separately, and overnight heart rate is '
+                    'only ever compared with your own nightly baseline - a lower value is not automatically '
+                    'treated as better recovery. '
                     'While highly correlated with physical readiness, it is a heuristic model and not a medically validated diagnostic tool. '
                     'Never use this app to diagnose illness or override severe physical pain.',
                     style: AppTypography.bodySmall.copyWith(

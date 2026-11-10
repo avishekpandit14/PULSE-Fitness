@@ -1,17 +1,22 @@
 import '../models/checkin_model.dart';
 import '../models/recovery_result.dart';
 import '../models/sleep_session_model.dart';
+import 'nighttime_heart_rate_analyzer.dart';
+import 'sleep_quality_analyzer.dart';
 
 /// Transparent, deterministic, HRV-free recovery score calculation.
 /// Designed for trackers that expose standard health signals through Health Connect,
 /// including devices where nocturnal HRV is not reported.
 class RecoveryCalculator {
-  // Configurable heuristic initial weights (must sum to 1.0)
-  static const double defaultSleepWeight = 0.35;
-  static const double defaultRhrWeight = 0.25;
+  // Configurable heuristic initial weights (must sum to 1.0). Sleep is split
+  // into duration and quality so that two nights of equal length can still
+  // produce different recovery scores.
+  static const double defaultSleepWeight = 0.25;
+  static const double defaultSleepQualityWeight = 0.20;
+  static const double defaultNightHrWeight = 0.18;
   static const double defaultStrainWeight = 0.15;
-  static const double defaultEnergyWeight = 0.10;
-  static const double defaultSorenessWeight = 0.10;
+  static const double defaultEnergyWeight = 0.09;
+  static const double defaultSorenessWeight = 0.08;
   static const double defaultFatigueWeight = 0.05;
 
   // Minimum consecutive RHR daily observations needed before establishing a personal baseline
@@ -21,6 +26,11 @@ class RecoveryCalculator {
   static const double minWeightThreshold = 0.35;
 
   /// Computes the comprehensive recovery result.
+  ///
+  /// [sleepQuality] and [nightHeartRate] are optional so callers that only have
+  /// a sleep session still work; quality is then derived from the session when
+  /// stages are available. Nothing is ever substituted with a zero reading: an
+  /// unavailable signal is excluded and the remaining weights are re-normalised.
   static RecoveryResult calculate({
     required SleepSessionModel? sleepSession,
     required double? todayRhr,
@@ -28,13 +38,22 @@ class RecoveryCalculator {
     required double? yesterdayStrain,
     required CheckInModel? checkIn,
     required double sleepTargetHours,
+    SleepQualityResult? sleepQuality,
+    NighttimeHeartRateAnalysis? nightHeartRate,
+    int napMinutes = 0,
   }) {
     final Map<String, double> componentScores = {};
     final Map<String, double> rawWeights = {};
     final List<String> availableSignals = [];
     final List<String> missingSignals = [];
 
-    // 1. Sleep Duration Score (35%)
+    final quality =
+        sleepQuality ??
+        (sleepSession != null && sleepSession.totalMinutes > 0
+            ? SleepQualityAnalyzer.analyze(sleepSession)
+            : null);
+
+    // 1. Sleep Duration Score (25%)
     if (sleepSession != null && sleepSession.totalMinutes > 0) {
       final sleepScore = calculateSleepScore(
         actualMinutes: sleepSession.totalMinutes,
@@ -47,35 +66,85 @@ class RecoveryCalculator {
       );
     } else {
       missingSignals.add(
-        'Sleep Session (No compatible sleep record was found)',
+        'Sleep Session (No compatible nighttime sleep record was found)',
       );
     }
 
-    // 2. Resting Heart Rate Score (25%)
+    // 2. Sleep Quality Score (20%) - stages + efficiency, never duration alone.
+    if (quality != null && quality.score != null) {
+      componentScores['Sleep Quality'] = quality.score!;
+      rawWeights['Sleep Quality'] = defaultSleepQualityWeight;
+      availableSignals.add(_qualitySignalLabel(quality));
+    } else {
+      missingSignals.add(
+        'Sleep Quality (No sleep stage or awake data was reported, so quality '
+        'could not be assessed)',
+      );
+    }
+
+    // 3. Heart rate (18%): nighttime HR is preferred and scored against the
+    // user's own nightly baseline. Resting HR is only used as a fallback, so the
+    // two correlated signals can never be counted twice.
     final double? baselineRhr = _computeRhrBaseline(historicalRhrs);
     final int rhrObservationsCount = historicalRhrs.length;
+    var heartRateScored = false;
 
-    if (todayRhr != null && todayRhr > 30 && todayRhr < 180) {
-      if (baselineRhr != null) {
-        final rhrScore = calculateRhrScore(
-          todayRhr: todayRhr,
-          baselineRhr: baselineRhr,
+    if (nightHeartRate != null && nightHeartRate.hasUsableData) {
+      if (nightHeartRate.hasBaseline) {
+        final nightScore = calculateNightHrScore(
+          averageBpm: nightHeartRate.averageBpm!,
+          baselineBpm: nightHeartRate.baselineBpm!,
+          stabilityScore: nightHeartRate.stabilityScore,
+          trendDeltaBpm: nightHeartRate.trendDeltaBpm,
         );
-        componentScores['Resting HR'] = rhrScore;
-        rawWeights['Resting HR'] = defaultRhrWeight;
+        componentScores['Nighttime HR'] = nightScore;
+        rawWeights['Nighttime HR'] = defaultNightHrWeight;
+        heartRateScored = true;
         availableSignals.add(
-          'Resting HR (${todayRhr.round()} bpm vs baseline ${baselineRhr.round()} bpm)',
+          'Nighttime HR (${nightHeartRate.averageBpm!.round()} bpm vs '
+          '${nightHeartRate.baselineBpm!.round()} bpm baseline)',
         );
       } else {
         missingSignals.add(
-          'RHR Baseline ($rhrObservationsCount/$minRhrBaselineObservations days logged. Baseline establishing...)',
+          'Nighttime HR Baseline (${nightHeartRate.baselineNightCount}/'
+          '${NighttimeHeartRateAnalyzer.minBaselineNights} nights logged. '
+          'Nighttime HR is compared with your own history, not an absolute value.)',
         );
       }
-    } else {
-      missingSignals.add('Resting Heart Rate (No resting sample recorded)');
+    } else if (nightHeartRate != null) {
+      missingSignals.add(
+        'Nighttime Heart Rate (${nightHeartRate.sampleCount} usable samples; '
+        'nighttime HR is excluded rather than estimated)',
+      );
     }
 
-    // 3. Recent Training Load Score (15%)
+    if (!heartRateScored) {
+      if (todayRhr != null && todayRhr > 30 && todayRhr < 180) {
+        if (baselineRhr != null) {
+          final rhrScore = calculateRhrScore(
+            todayRhr: todayRhr,
+            baselineRhr: baselineRhr,
+          );
+          componentScores['Resting HR'] = rhrScore;
+          rawWeights['Resting HR'] = defaultNightHrWeight;
+          heartRateScored = true;
+          availableSignals.add(
+            'Resting HR (${todayRhr.round()} bpm vs baseline '
+            '${baselineRhr.round()} bpm)',
+          );
+        } else {
+          missingSignals.add(
+            'RHR Baseline ($rhrObservationsCount/$minRhrBaselineObservations days logged. Baseline establishing...)',
+          );
+        }
+      } else {
+        missingSignals.add(
+          'Heart Rate (No resting or nighttime heart rate sample recorded)',
+        );
+      }
+    }
+
+    // 4. Recent Training Load Score (15%)
     if (yesterdayStrain != null) {
       final strainScore = calculateStrainRecoveryScore(yesterdayStrain);
       componentScores['Recent Load'] = strainScore;
@@ -88,7 +157,7 @@ class RecoveryCalculator {
       missingSignals.add('Recent Training Load (No prior day strain tracked)');
     }
 
-    // 4. Daily Check-in: Energy (10%), Soreness (10%), Fatigue (5%)
+    // 5. Daily Check-in: Energy (9%), Soreness (8%), Fatigue (5%)
     if (checkIn != null) {
       final energyScore = calculateEnergyScore(checkIn.energy);
       final sorenessScore = calculateSorenessScore(checkIn.muscleSoreness);
@@ -120,7 +189,7 @@ class RecoveryCalculator {
         shortExplanation:
             'Not enough data to calculate an accurate recovery estimate.',
         detailedExplanation:
-            'Recovery calculation requires at least a sleep session from Health Connect '
+            'Recovery calculation requires at least a nighttime sleep session from Health Connect '
             'or a completed subjective check-in. Total signal coverage is currently '
             '${(activeWeightSum * 100).round()}%, below the 35% minimum threshold.',
         componentScores: componentScores,
@@ -134,6 +203,9 @@ class RecoveryCalculator {
         sleepTargetMinutes: (sleepTargetHours * 60).round(),
         checkIn: checkIn,
         yesterdayStrain: yesterdayStrain,
+        sleepQuality: quality,
+        nightHeartRate: nightHeartRate,
+        napMinutes: napMinutes,
       );
     }
 
@@ -169,12 +241,40 @@ class RecoveryCalculator {
       confidence = ConfidenceLevel.low;
     }
 
+    // Explainable contributions, largest absolute influence first.
+    final factors = <RecoveryFactor>[];
+    for (final entry in normalizedWeights.entries) {
+      final name = entry.key;
+      factors.add(
+        RecoveryFactor(
+          name: name,
+          impactPoints: (componentScores[name]! - 50.0) * entry.value,
+          detail: _factorDetail(
+            name: name,
+            sleepSession: sleepSession,
+            quality: quality,
+            nightHeartRate: nightHeartRate,
+            baselineRhr: baselineRhr,
+            todayRhr: todayRhr,
+            yesterdayStrain: yesterdayStrain,
+            checkIn: checkIn,
+            sleepTargetHours: sleepTargetHours,
+          ),
+        ),
+      );
+    }
+    factors.sort(
+      (a, b) => b.impactPoints.abs().compareTo(a.impactPoints.abs()),
+    );
+
     // Explanations
     final String shortExplanation = _buildShortExplanation(
       category: category,
       componentScores: componentScores,
       baselineRhr: baselineRhr,
       todayRhr: todayRhr,
+      quality: quality,
+      nightHeartRate: nightHeartRate,
     );
 
     final String detailedExplanation = _buildDetailedExplanation(
@@ -183,6 +283,8 @@ class RecoveryCalculator {
       coveragePercent: (activeWeightSum * 100).round(),
       availableSignals: availableSignals,
       missingSignals: missingSignals,
+      quality: quality,
+      nightHeartRate: nightHeartRate,
     );
 
     return RecoveryResult(
@@ -202,6 +304,10 @@ class RecoveryCalculator {
       sleepTargetMinutes: (sleepTargetHours * 60).round(),
       checkIn: checkIn,
       yesterdayStrain: yesterdayStrain,
+      sleepQuality: quality,
+      nightHeartRate: nightHeartRate,
+      factors: factors,
+      napMinutes: napMinutes,
     );
   }
 
@@ -262,6 +368,46 @@ class RecoveryCalculator {
     }
   }
 
+  /// Nighttime heart rate score (0-100).
+  ///
+  /// Combines the deviation from the user's own nightly average (65%), how
+  /// stable the night was (20%) and whether heart rate settled through the night
+  /// (15%). Stability is dispersion of sampled BPM values, not HRV.
+  static double calculateNightHrScore({
+    required double averageBpm,
+    required double baselineBpm,
+    double? stabilityScore,
+    double? trendDeltaBpm,
+  }) {
+    var weighted = 0.0;
+    var weights = 0.0;
+
+    final deltaScore = calculateRhrScore(
+      todayRhr: averageBpm,
+      baselineRhr: baselineBpm,
+    );
+    weighted += deltaScore * 0.65;
+    weights += 0.65;
+
+    if (stabilityScore != null) {
+      weighted += stabilityScore.clamp(0.0, 100.0) * 0.20;
+      weights += 0.20;
+    }
+    if (trendDeltaBpm != null) {
+      weighted += _trendScore(trendDeltaBpm) * 0.15;
+      weights += 0.15;
+    }
+    if (weights <= 0) return deltaScore;
+    return (weighted / weights).clamp(0.0, 100.0);
+  }
+
+  /// A heart rate that trends *up* across the night is the abnormal pattern.
+  /// Flat or gently falling values score highest; steep rises lose points.
+  static double _trendScore(double deltaBpm) {
+    if (deltaBpm <= 0) return 100.0;
+    return (100.0 - deltaBpm * 5.0).clamp(40.0, 100.0);
+  }
+
   /// Calculates recent training load score (0-100) based on yesterday's strain.
   static double calculateStrainRecoveryScore(double yesterdayStrain) {
     if (yesterdayStrain <= 6.0) {
@@ -310,14 +456,85 @@ class RecoveryCalculator {
     return sum / recent.length;
   }
 
+  static String _qualitySignalLabel(SleepQualityResult quality) {
+    final parts = <String>[];
+    if (quality.deepRatio != null) {
+      parts.add('Deep ${(quality.deepRatio! * 100).round()}%');
+    }
+    if (quality.remRatio != null) {
+      parts.add('REM ${(quality.remRatio! * 100).round()}%');
+    }
+    if (quality.efficiency != null) {
+      parts.add('Efficiency ${(quality.efficiency! * 100).round()}%');
+    }
+    final detail = parts.isEmpty ? 'limited stage data' : parts.join(', ');
+    return 'Sleep Quality (${quality.score!.round()}/100 — $detail)';
+  }
+
+  static String _factorDetail({
+    required String name,
+    required SleepSessionModel? sleepSession,
+    required SleepQualityResult? quality,
+    required NighttimeHeartRateAnalysis? nightHeartRate,
+    required double? baselineRhr,
+    required double? todayRhr,
+    required double? yesterdayStrain,
+    required CheckInModel? checkIn,
+    required double sleepTargetHours,
+  }) {
+    switch (name) {
+      case 'Sleep Duration':
+        final hours = (sleepSession?.hours ?? 0).toStringAsFixed(1);
+        return '$hours h of ${sleepTargetHours.toStringAsFixed(1)} h target';
+      case 'Sleep Quality':
+        if (quality == null) return 'Not assessed';
+        return quality.availableFactors.isEmpty
+            ? 'Limited stage data'
+            : quality.availableFactors.join(' • ');
+      case 'Nighttime HR':
+        final avg = nightHeartRate?.averageBpm?.round();
+        final base = nightHeartRate?.baselineBpm?.round();
+        final delta = nightHeartRate?.baselineDeltaBpm?.round();
+        if (avg == null || base == null) return 'Nighttime HR not established';
+        final sign = (delta ?? 0) >= 0 ? '+' : '';
+        return '$avg bpm vs $base bpm baseline ($sign$delta bpm)';
+      case 'Resting HR':
+        if (todayRhr == null || baselineRhr == null) return 'No baseline yet';
+        final delta = (todayRhr - baselineRhr).round();
+        final sign = delta >= 0 ? '+' : '';
+        return '${todayRhr.round()} bpm vs ${baselineRhr.round()} bpm baseline '
+            '($sign$delta bpm)';
+      case 'Recent Load':
+        return yesterdayStrain == null
+            ? 'No prior day strain'
+            : 'Yesterday strain ${yesterdayStrain.toStringAsFixed(1)}';
+      case 'Energy':
+        return 'Rated ${checkIn?.energy ?? 0}/10';
+      case 'Muscle Soreness':
+        return 'Rated ${checkIn?.muscleSoreness ?? 0}/10 soreness';
+      case 'Fatigue':
+        return 'Rated ${checkIn?.fatigue ?? 0}/10 fatigue';
+      default:
+        return '';
+    }
+  }
+
   static String _buildShortExplanation({
     required RecoveryCategory category,
     required Map<String, double> componentScores,
     required double? baselineRhr,
     required double? todayRhr,
+    required SleepQualityResult? quality,
+    required NighttimeHeartRateAnalysis? nightHeartRate,
   }) {
+    final goodArchitecture =
+        (quality?.score ?? 0) >= 70 && quality?.hasStageData == true;
+
     switch (category) {
       case RecoveryCategory.ready:
+        if (goodArchitecture && nightHeartRate?.hasBaseline == true) {
+          return 'Sleep architecture and overnight heart rate both look settled, so your body is primed for a productive session.';
+        }
         if (todayRhr != null &&
             baselineRhr != null &&
             todayRhr <= baselineRhr) {
@@ -325,12 +542,23 @@ class RecoveryCalculator {
         }
         return 'Sufficient rest and subjective vitality indicate your body is ready for productive training load.';
       case RecoveryCategory.moderate:
+        if (quality != null &&
+            quality.isAvailable &&
+            quality.score! < 60 &&
+            nightHeartRate?.hasBaseline == true) {
+          return 'Sleep length is acceptable, but lighter or more fragmented sleep and overnight heart rate suggest a moderate day.';
+        }
         return 'Balanced recovery profile. Suitable for aerobic maintenance, strength progression, or technique drills.';
       case RecoveryCategory.restRecommended:
         if (todayRhr != null &&
             baselineRhr != null &&
             todayRhr > baselineRhr + 4) {
           return 'Elevated resting heart rate and cumulative fatigue suggest prioritising active recovery or sleep.';
+        }
+        if (nightHeartRate != null &&
+            nightHeartRate.hasBaseline &&
+            (nightHeartRate.baselineDeltaBpm ?? 0) > 4) {
+          return 'Your overnight heart rate ran above your personal baseline, pointing to incomplete recovery.';
         }
         return 'Restorative recovery needed. Low sleep or elevated fatigue indicates higher vulnerability to overtraining.';
       case RecoveryCategory.notEnoughData:
@@ -344,6 +572,8 @@ class RecoveryCalculator {
     required int coveragePercent,
     required List<String> availableSignals,
     required List<String> missingSignals,
+    required SleepQualityResult? quality,
+    required NighttimeHeartRateAnalysis? nightHeartRate,
   }) {
     final buffer = StringBuffer();
     buffer.write(
@@ -353,6 +583,21 @@ class RecoveryCalculator {
     if (missingSignals.isNotEmpty) {
       buffer.write(
         'Missing signals (${missingSignals.length}) were excluded and remaining weights were re-normalized to 100%. ',
+      );
+    }
+
+    if (quality != null && quality.isAvailable) {
+      buffer.write(
+        'Sleep quality (${quality.score!.round()}/100) is scored from stage '
+        'composition and efficiency, so two nights of equal length can score '
+        'differently. ',
+      );
+    }
+
+    if (nightHeartRate != null && nightHeartRate.hasBaseline) {
+      buffer.write(
+        'Overnight heart rate is compared only with your own nightly baseline, '
+        'never with an absolute ideal value. ',
       );
     }
 

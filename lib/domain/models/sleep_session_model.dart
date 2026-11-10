@@ -1,5 +1,51 @@
 enum SleepDataQuality { measured, partial, unavailable }
 
+/// A non-primary sleep period (daytime nap or an extra sleep block recorded by
+/// the tracker) kept separate from the primary nighttime session so that a nap
+/// can never replace or shrink the overnight sleep score.
+class SleepNap {
+  final DateTime startTime;
+  final DateTime endTime;
+  final int minutes;
+
+  const SleepNap({
+    required this.startTime,
+    required this.endTime,
+    required this.minutes,
+  });
+
+  double get hours => minutes / 60.0;
+}
+
+/// Result of classifying one day of sleep records into the primary nighttime
+/// session plus any additional naps.
+class SleepNightReport {
+  final SleepSessionModel? primary;
+  final List<SleepNap> naps;
+
+  /// Sum of measured nap minutes. Never added to the primary sleep score.
+  final int napMinutes;
+
+  /// False when no record fell inside the night band and the longest session
+  /// had to be used as a fallback (e.g. night-shift sleepers).
+  final bool primaryIsNighttime;
+
+  const SleepNightReport({
+    this.primary,
+    this.naps = const [],
+    this.napMinutes = 0,
+    this.primaryIsNighttime = false,
+  });
+
+  static const SleepNightReport empty = SleepNightReport();
+
+  bool get hasNaps => naps.isNotEmpty;
+
+  int get primaryMinutes => primary?.totalMinutes ?? 0;
+
+  int get totalSleepMinutes => primaryMinutes + napMinutes;
+}
+
 class SleepSessionModel {
   final String id;
   final String dateKey;

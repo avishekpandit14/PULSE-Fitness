@@ -40,15 +40,54 @@ class ProcessedSleepData {
   });
 }
 
+/// A secondary sleep period kept apart from the primary nighttime session.
+class ProcessedNap {
+  final SleepRecord interval;
+  final int minutes;
+
+  const ProcessedNap({required this.interval, required this.minutes});
+
+  DateTime get start => interval.start;
+  DateTime get end => interval.end;
+}
+
+/// One night of sleep split into the primary nighttime session and any naps.
+class ProcessedSleepNight {
+  final ProcessedSleepData primary;
+  final List<ProcessedNap> naps;
+  final bool primaryIsNighttime;
+
+  const ProcessedSleepNight({
+    required this.primary,
+    this.naps = const [],
+    this.primaryIsNighttime = true,
+  });
+
+  int get napMinutes => naps.fold(0, (sum, nap) => sum + nap.minutes);
+}
+
 class SleepDataProcessor {
+  static const Duration defaultRecentWindow = Duration(hours: 24);
+
+  /// Maximum gap between stage records that still belongs to one sleep block.
+  static const Duration clusterGap = Duration(minutes: 90);
+
+  /// Local clock band (18:00 -> 12:00 the next day) used to tell overnight
+  /// sleep apart from daytime naps. Chosen so that a sleep block crossing
+  /// midnight is handled naturally by interval overlap arithmetic.
+  static const int nightBandStartHour = 18;
+  static const int nightBandEndHour = 12;
+
+  /// Two records overlapping by more than this share of the shorter one are
+  /// treated as the same sleep period so the duration is not counted twice.
+  static const double duplicateOverlapRatio = 0.5;
+
   static ProcessedSleepData? process({
     required List<SleepRecord> records,
     required DateTime now,
-    Duration recentWindow = const Duration(hours: 24),
+    Duration recentWindow = defaultRecentWindow,
   }) {
-    final valid = records
-        .where((record) => record.end.isAfter(record.start))
-        .toList();
+    final valid = _validRecords(records);
     if (valid.isEmpty) return null;
 
     final sessionCandidates = valid
@@ -62,9 +101,209 @@ class SleepDataProcessor {
 
     final session = sessionCandidates.isNotEmpty
         ? _selectSession(sessionCandidates, now)
-        : _buildSessionFromStages(valid, now);
+        : _latestCluster(valid, now, recentWindow);
     if (session == null) return null;
 
+    return _buildProcessed(session, valid, now);
+  }
+
+  /// Splits a day of sleep records into the primary nighttime session and the
+  /// naps that were also recorded.
+  ///
+  /// The primary session is never simply "the latest record": it is the longest
+  /// session whose majority falls inside the night band. When no record touches
+  /// the night band (e.g. a night-shift sleeper) the longest session is used as
+  /// a fallback and the secondary periods are still reported as naps.
+  static ProcessedSleepNight? processNight({
+    required List<SleepRecord> records,
+    required DateTime now,
+    Duration recentWindow = defaultRecentWindow,
+  }) {
+    final valid = _validRecords(records);
+    if (valid.isEmpty) return null;
+
+    final windowStart = now.subtract(recentWindow);
+    final inWindow = valid
+        .where(
+          (record) =>
+              record.end.isAfter(windowStart) && !record.start.isAfter(now),
+        )
+        .toList();
+    if (inWindow.isEmpty) return null;
+
+    final sessionRecords = inWindow
+        .where((record) => record.kind == SleepRecordKind.session)
+        .toList();
+
+    final candidates = sessionRecords.isNotEmpty
+        ? sessionRecords
+        : _clusterSessions(inWindow, now: now, windowStart: windowStart);
+    if (candidates.isEmpty) return null;
+
+    final built = candidates
+        .map((candidate) => _buildProcessed(candidate, valid, now))
+        .whereType<ProcessedSleepData>()
+        .toList();
+    if (built.isEmpty) return null;
+
+    final deduped = _dedupeSessions(built);
+    final nighttime = deduped
+        .where(
+          (data) => isNighttimeSession(data.session.start, data.session.end),
+        )
+        .toList();
+
+    final primary = nighttime.isNotEmpty
+        ? _pickPrimary(nighttime)
+        : _pickPrimary(deduped);
+    final primaryIsNighttime = nighttime.isNotEmpty;
+
+    final naps = <ProcessedNap>[];
+    for (final data in deduped) {
+      if (identical(data, primary)) continue;
+      if (data.totalMinutes <= 0) continue;
+      if (_overlapRatio(data.session, primary.session) >=
+          duplicateOverlapRatio) {
+        continue;
+      }
+      final duplicatesExistingNap = naps.any(
+        (nap) =>
+            _overlapRatio(data.session, nap.interval) >= duplicateOverlapRatio,
+      );
+      if (duplicatesExistingNap) continue;
+      naps.add(
+        ProcessedNap(interval: data.session, minutes: data.totalMinutes),
+      );
+    }
+    naps.sort((a, b) => a.start.compareTo(b.start));
+
+    return ProcessedSleepNight(
+      primary: primary,
+      naps: naps,
+      primaryIsNighttime: primaryIsNighttime,
+    );
+  }
+
+  /// True when the majority of the [start]-[end] window sits inside a night
+  /// band (18:00 -> 12:00). Works for sessions that cross midnight.
+  static bool isNighttimeSession(DateTime start, DateTime end) {
+    final total = end.difference(start).inMinutes;
+    if (total <= 0) return false;
+    return nightOverlapMinutes(start, end) * 2 >= total;
+  }
+
+  /// Minutes of [start]-[end] that fall inside any night band. Deterministic
+  /// interval arithmetic, no timezone assumptions beyond local `DateTime` walls.
+  static int nightOverlapMinutes(DateTime start, DateTime end) {
+    var overlap = 0;
+    var day = DateTime(start.year, start.month, start.day - 1);
+    final lastDay = DateTime(end.year, end.month, end.day);
+    while (!day.isAfter(lastDay)) {
+      final bandStart = DateTime(
+        day.year,
+        day.month,
+        day.day,
+        nightBandStartHour,
+      );
+      final bandEnd = DateTime(
+        day.year,
+        day.month,
+        day.day + 1,
+        nightBandEndHour,
+      );
+      final clippedStart = start.isAfter(bandStart) ? start : bandStart;
+      final clippedEnd = end.isBefore(bandEnd) ? end : bandEnd;
+      if (clippedEnd.isAfter(clippedStart)) {
+        overlap += clippedEnd.difference(clippedStart).inMinutes;
+      }
+      day = DateTime(day.year, day.month, day.day + 1);
+    }
+    return overlap;
+  }
+
+  static List<SleepRecord> _validRecords(List<SleepRecord> records) =>
+      records.where((record) => record.end.isAfter(record.start)).toList();
+
+  static SleepRecord? _selectSession(
+    List<SleepRecord> candidates,
+    DateTime now,
+  ) {
+    if (candidates.isEmpty) return null;
+    final sorted = [...candidates]
+      ..sort((a, b) {
+        final endComparison = b.end.compareTo(a.end);
+        return endComparison != 0 ? endComparison : b.start.compareTo(a.start);
+      });
+    return sorted.firstWhere(
+      (record) => !record.end.isAfter(now),
+      orElse: () => sorted.first,
+    );
+  }
+
+  static SleepRecord? _latestCluster(
+    List<SleepRecord> records,
+    DateTime now,
+    Duration recentWindow,
+  ) {
+    final clusters = _clusterSessions(
+      records,
+      now: now,
+      windowStart: now.subtract(recentWindow),
+    );
+    return clusters.isEmpty ? null : clusters.last;
+  }
+
+  /// Groups stage records into sleep blocks separated by more than
+  /// [clusterGap]. Used only when the tracker does not report a parent
+  /// `SLEEP_SESSION` record.
+  static List<SleepRecord> _clusterSessions(
+    List<SleepRecord> records, {
+    required DateTime now,
+    required DateTime windowStart,
+  }) {
+    final intervals =
+        records
+            .where(
+              (record) =>
+                  record.kind != SleepRecordKind.session &&
+                  record.end.isAfter(windowStart) &&
+                  !record.start.isAfter(now),
+            )
+            .toList()
+          ..sort((a, b) => a.start.compareTo(b.start));
+    if (intervals.isEmpty) return const [];
+
+    final clusters = <List<SleepRecord>>[];
+    var cluster = <SleepRecord>[intervals.first];
+    for (final interval in intervals.skip(1)) {
+      final previousEnd = cluster
+          .map((record) => record.end)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      if (interval.start.difference(previousEnd) <= clusterGap) {
+        cluster.add(interval);
+      } else {
+        clusters.add(cluster);
+        cluster = [interval];
+      }
+    }
+    clusters.add(cluster);
+
+    return clusters.map((records) {
+      final start = records
+          .map((record) => record.start)
+          .reduce((a, b) => a.isBefore(b) ? a : b);
+      final end = records
+          .map((record) => record.end)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      return SleepRecord(kind: SleepRecordKind.session, start: start, end: end);
+    }).toList();
+  }
+
+  static ProcessedSleepData? _buildProcessed(
+    SleepRecord session,
+    List<SleepRecord> valid,
+    DateTime now,
+  ) {
     final windowStart = session.start;
     final windowEnd = session.end.isAfter(now) ? now : session.end;
     if (!windowEnd.isAfter(windowStart)) return null;
@@ -155,61 +394,57 @@ class SleepDataProcessor {
     );
   }
 
-  static SleepRecord? _selectSession(
-    List<SleepRecord> candidates,
-    DateTime now,
+  /// Keeps the longest session of each overlapping group so duplicate or
+  /// partially duplicated tracker records are not counted twice.
+  static List<ProcessedSleepData> _dedupeSessions(
+    List<ProcessedSleepData> sessions,
   ) {
-    if (candidates.isEmpty) return null;
-    final sorted = [...candidates]
+    final sorted = [...sessions]
       ..sort((a, b) {
-        final endComparison = b.end.compareTo(a.end);
-        return endComparison != 0 ? endComparison : b.start.compareTo(a.start);
+        final minutes = b.totalMinutes.compareTo(a.totalMinutes);
+        return minutes != 0
+            ? minutes
+            : a.session.start.compareTo(b.session.start);
       });
-    return sorted.firstWhere(
-      (record) => !record.end.isAfter(now),
-      orElse: () => sorted.first,
-    );
+    final result = <ProcessedSleepData>[];
+    for (final session in sorted) {
+      final overlaps = result.any(
+        (existing) =>
+            _overlapRatio(session.session, existing.session) >=
+            duplicateOverlapRatio,
+      );
+      if (!overlaps) result.add(session);
+    }
+    return result;
   }
 
-  static SleepRecord? _buildSessionFromStages(
-    List<SleepRecord> records,
-    DateTime now,
-  ) {
-    final intervals =
-        records
-            .where(
-              (record) =>
-                  record.kind != SleepRecordKind.session &&
-                  record.end.isAfter(now.subtract(const Duration(hours: 24))) &&
-                  !record.start.isAfter(now),
-            )
-            .toList()
-          ..sort((a, b) => a.start.compareTo(b.start));
-    if (intervals.isEmpty) return null;
+  static ProcessedSleepData _pickPrimary(List<ProcessedSleepData> sessions) {
+    final sorted = [...sessions]
+      ..sort((a, b) {
+        final minutes = b.totalMinutes.compareTo(a.totalMinutes);
+        if (minutes != 0) return minutes;
+        final window = _windowMinutes(
+          b.session.start,
+          b.session.end,
+        ).compareTo(_windowMinutes(a.session.start, a.session.end));
+        return window != 0
+            ? window
+            : a.session.start.compareTo(b.session.start);
+      });
+    return sorted.first;
+  }
 
-    final clusters = <List<SleepRecord>>[];
-    var cluster = <SleepRecord>[intervals.first];
-    for (final interval in intervals.skip(1)) {
-      final previousEnd = cluster
-          .map((record) => record.end)
-          .reduce((a, b) => a.isAfter(b) ? a : b);
-      if (interval.start.difference(previousEnd) <=
-          const Duration(minutes: 90)) {
-        cluster.add(interval);
-      } else {
-        clusters.add(cluster);
-        cluster = [interval];
-      }
-    }
-    clusters.add(cluster);
-    final selected = clusters.last;
-    final start = selected
-        .map((record) => record.start)
-        .reduce((a, b) => a.isBefore(b) ? a : b);
-    final end = selected
-        .map((record) => record.end)
-        .reduce((a, b) => a.isAfter(b) ? a : b);
-    return SleepRecord(kind: SleepRecordKind.session, start: start, end: end);
+  static double _overlapRatio(SleepRecord a, SleepRecord b) {
+    final start = a.start.isAfter(b.start) ? a.start : b.start;
+    final end = a.end.isBefore(b.end) ? a.end : b.end;
+    if (!end.isAfter(start)) return 0;
+    final overlap = end.difference(start).inMinutes;
+    final shortest = [
+      _windowMinutes(a.start, a.end),
+      _windowMinutes(b.start, b.end),
+    ].reduce((x, y) => x < y ? x : y);
+    if (shortest <= 0) return 0;
+    return overlap / shortest;
   }
 
   static SleepRecord _clip(SleepRecord record, DateTime start, DateTime end) {

@@ -231,6 +231,8 @@ class DashboardScreen extends StatelessWidget {
                   // C. Sleep Card
                   SleepSummaryCard(
                     sleepSession: healthProvider.sleepSession,
+                    naps: healthProvider.sleepNight.naps,
+                    napMinutes: healthProvider.sleepNight.napMinutes,
                     targetHours: user.sleepTargetHours,
                     onTap: () {
                       Navigator.push(

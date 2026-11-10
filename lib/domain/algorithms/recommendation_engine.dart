@@ -37,6 +37,25 @@ class RecommendationEngine {
       factors.add('Sleep duration logged at $sleepHrs hrs');
     }
 
+    final quality = recovery.sleepQuality;
+    if (quality != null && quality.isAvailable) {
+      final percent = quality.score!.round();
+      final stageNote = quality.hasStageData
+          ? ' with stage data'
+          : ' from duration and efficiency only';
+      factors.add('Sleep quality scored $percent/100$stageNote');
+    }
+
+    final nightHr = recovery.nightHeartRate;
+    if (nightHr != null && nightHr.hasBaseline) {
+      final delta = nightHr.baselineDeltaBpm!.round();
+      final direction = delta >= 0 ? '+' : '';
+      factors.add(
+        'Nighttime HR ${nightHr.averageBpm!.round()} bpm '
+        '($direction$delta bpm vs your nightly baseline)',
+      );
+    }
+
     if (rhrDelta != null) {
       if (rhrDelta <= 0) {
         factors.add(

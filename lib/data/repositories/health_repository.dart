@@ -1,8 +1,10 @@
 import '../datasources/database_helper.dart';
 import '../datasources/health_connect_service.dart';
 import '../datasources/mock_data_generator.dart';
+import '../../domain/algorithms/nighttime_heart_rate_analyzer.dart';
 import '../../domain/algorithms/recommendation_engine.dart';
 import '../../domain/algorithms/recovery_calculator.dart';
+import '../../domain/algorithms/sleep_quality_analyzer.dart';
 import '../../domain/algorithms/strain_calculator.dart';
 import '../../domain/models/checkin_model.dart';
 import '../../domain/models/heart_rate_sample.dart';
@@ -80,6 +82,9 @@ class HealthRepository {
       StrainResult strain,
       RecommendationResult recommendation,
       SleepSessionModel? sleepSession,
+      SleepNightReport sleepNight,
+      SleepQualityResult? sleepQuality,
+      NighttimeHeartRateAnalysis? nightHeartRate,
       double? todayRhr,
       List<HeartRateSample> hrSamples,
       int steps,
@@ -92,10 +97,11 @@ class HealthRepository {
     required List<WorkoutModel> workouts,
   }) async {
     final now = DateTime.now();
-    final dateKey =
-        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final dateKey = _dateKey(now);
 
-    final SleepSessionModel? sleepSession;
+    final SleepNightReport sleepNight;
+    final SleepQualityResult? sleepQuality;
+    final NighttimeHeartRateAnalysis? nightHeartRate;
     final double? todayRhr;
     final List<double> historicalRhrs;
     final int steps;
@@ -109,8 +115,19 @@ class HealthRepository {
     bool activeCaloriesAvailable = true;
 
     if (profile.isDemoMode) {
-      sleepSession = MockDataGenerator.getMockSleepSession(
+      sleepNight = MockDataGenerator.getMockSleepNight(
         targetHours: profile.sleepTargetHours,
+      );
+      sleepQuality = _evaluateSleep(sleepNight.primary);
+      nightHeartRate = _analyzeNightHeartRate(
+        sleepSession: sleepNight.primary,
+        samples: sleepNight.primary == null
+            ? const []
+            : MockDataGenerator.getMockNightHeartRateSamples(
+                startTime: sleepNight.primary!.startTime,
+                endTime: sleepNight.primary!.endTime,
+              ),
+        historicalNightlyAverages: MockDataGenerator.getMockNightlyHrAverages(),
       );
       todayRhr = MockDataGenerator.getMockTodayRhr();
       historicalRhrs = MockDataGenerator.getMockHistoricalRhrs();
@@ -126,9 +143,29 @@ class HealthRepository {
       };
       syncedWorkouts = byId.values.toList()
         ..sort((a, b) => b.startTime.compareTo(a.startTime));
-      sleepSession = await _healthService.fetchTodaySleepSession(
+
+      sleepNight = await _healthService.fetchSleepNight(
         targetHours: profile.sleepTargetHours,
       );
+      sleepQuality = _evaluateSleep(sleepNight.primary);
+
+      final primarySleep = sleepNight.primary;
+      final nightSamples =
+          primarySleep == null || primarySleep.totalMinutes <= 0
+          ? const <HeartRateSample>[]
+          : await _healthService.fetchHeartRateSamples(
+              start: primarySleep.startTime,
+              end: primarySleep.endTime,
+            );
+      nightHeartRate = _analyzeNightHeartRate(
+        sleepSession: primarySleep,
+        samples: nightSamples,
+        // Read the baseline before today's summary is written, and exclude today
+        // so a night never contributes to its own baseline.
+        historicalNightlyAverages: await _dbHelper
+            .getHistoricalNightlyHrAverages(excludeDateKey: dateKey),
+      );
+
       todayRhr = await _healthService.fetchTodayRestingHeartRate();
 
       // Persist today's RHR to database if recorded to build baseline
@@ -172,19 +209,26 @@ class HealthRepository {
           .toList();
     }
 
-    // Yesterday's strain from rolling history
-    final double? yesterdayStrain = recentLoads.length >= 2
-        ? recentLoads[recentLoads.length - 2]
+    // Yesterday's strain. `recentLoads` holds prior days only (StrainCalculator
+    // appends today's score itself), so the final entry is yesterday - not the
+    // second-to-last, which skipped a day. An unavailable reading stays null
+    // instead of silently becoming a rest day.
+    final double? yesterdayStrain =
+        recentLoads.isNotEmpty && recentLoadAvailability.last
+        ? recentLoads.last
         : null;
 
     // Compute recovery
     final recovery = RecoveryCalculator.calculate(
-      sleepSession: sleepSession,
+      sleepSession: sleepNight.primary,
       todayRhr: todayRhr,
       historicalRhrs: historicalRhrs,
       yesterdayStrain: yesterdayStrain,
       checkIn: checkIn,
       sleepTargetHours: profile.sleepTargetHours,
+      sleepQuality: sleepQuality,
+      nightHeartRate: nightHeartRate,
+      napMinutes: sleepNight.napMinutes,
     );
 
     // Compute strain with hrSamples and recovery score
@@ -206,13 +250,16 @@ class HealthRepository {
         dateKey: dateKey,
         recoveryScore: recovery.score,
         strainScore: strain.score,
-        sleepMinutes: sleepSession?.totalMinutes,
+        sleepMinutes: sleepNight.primary?.totalMinutes,
         steps: stepsAvailable ? steps : null,
         activeCalories: activeCaloriesAvailable ? activeCalories : null,
         source: 'Android Health Connect',
         dataQuality: syncedWorkouts.isNotEmpty || hrSamples.isNotEmpty
             ? 'measured'
             : 'partial',
+        nightHrAvg: nightHeartRate.hasUsableData
+            ? nightHeartRate.averageBpm
+            : null,
       );
     }
 
@@ -226,7 +273,10 @@ class HealthRepository {
       recovery: recovery,
       strain: strain,
       recommendation: recommendation,
-      sleepSession: sleepSession,
+      sleepSession: sleepNight.primary,
+      sleepNight: sleepNight,
+      sleepQuality: sleepQuality,
+      nightHeartRate: nightHeartRate,
       todayRhr: todayRhr,
       hrSamples: hrSamples,
       steps: steps,
@@ -234,4 +284,37 @@ class HealthRepository {
       workouts: syncedWorkouts,
     );
   }
+
+  static SleepQualityResult? _evaluateSleep(SleepSessionModel? session) {
+    if (session == null || session.totalMinutes <= 0) return null;
+    return SleepQualityAnalyzer.analyze(session);
+  }
+
+  /// Analyzes nighttime HR inside the primary sleep window. Returns an explicit
+  /// "insufficient" analysis (never invented values) when there was no sleep
+  /// session or no usable samples.
+  static NighttimeHeartRateAnalysis _analyzeNightHeartRate({
+    required SleepSessionModel? sleepSession,
+    required List<HeartRateSample> samples,
+    required List<double> historicalNightlyAverages,
+  }) {
+    if (sleepSession == null || sleepSession.totalMinutes <= 0) {
+      return NighttimeHeartRateAnalysis(
+        sampleCount: 0,
+        quality: NighttimeHrQuality.insufficient,
+        limitations: const [
+          'No validated nighttime sleep session, so nighttime HR was not analysed.',
+        ],
+      );
+    }
+    return NighttimeHeartRateAnalyzer.analyze(
+      samples: samples,
+      sleepStart: sleepSession.startTime,
+      sleepEnd: sleepSession.endTime,
+      historicalNightlyAverages: historicalNightlyAverages,
+    );
+  }
+
+  static String _dateKey(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 }
