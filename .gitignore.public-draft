@@ -1,0 +1,62 @@
+# Flutter and generated output
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub/
+.pub-cache/
+/build/
+/coverage/
+**/doc/api/
+ios/Flutter/.last_build_id
+ios/Flutter/ephemeral/
+macos/Flutter/ephemeral/
+
+# Android and Gradle machine-local state
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# Local data and health records
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+databases/
+local_data/
+health_data/
+exports/
+backups/
+
+# Signing credentials and secrets
+*.jks
+*.keystore
+*.p12
+*.pfx
+key.properties
+keystore.properties
+signing.properties
+.env
+.env.*
+!.env.example
+*.secret
+*credentials*
+*secrets*
+
+# IDE and machine-specific files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+*.log
+*.swp
+*.class
+*.pyc
+
+# Flutter symbolication and obfuscation output
+app.*.symbols
+app.*.map.json
