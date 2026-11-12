@@ -191,7 +191,9 @@ class RecoveryDetailsScreen extends StatelessWidget {
             // Component Breakdown
             const SectionHeader(
               title: 'Telemetry Component Breakdown',
-              subtitle: 'Heuristic weights re-normalized across active signals',
+              subtitle:
+                  'Weights re-normalized across active signals. Sleep quality '
+                  'outweighs duration, and duration credit is capped by it.',
             ),
             const SizedBox(height: 8),
 

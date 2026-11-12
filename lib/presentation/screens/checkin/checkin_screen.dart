@@ -3,12 +3,23 @@ import 'package:provider/provider.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_typography.dart';
 import '../../../core/utils/date_utils.dart';
+import '../../../domain/algorithms/recovery_calculator.dart';
 import '../../../domain/models/checkin_model.dart';
 import '../../providers/health_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/workout_provider.dart';
 import '../../widgets/pulse_card.dart';
 import '../../widgets/section_header.dart';
+
+/// Recovery weight label (e.g. `8%`), derived from the calculator so the copy
+/// on this screen can never drift from the weights the score actually uses.
+String _weightPercent(double weight) => '${(weight * 100).round()}%';
+
+/// Total recovery weight carried by the three subjective check-in sliders.
+final double _checkInWeightTotal =
+    RecoveryCalculator.defaultEnergyWeight +
+    RecoveryCalculator.defaultSorenessWeight +
+    RecoveryCalculator.defaultFatigueWeight;
 
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({super.key});
@@ -83,9 +94,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
                           color: AppColors.limeAccent.withAlpha(30),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Text(
-                          '25% RECOVERY WEIGHT',
-                          style: TextStyle(
+                        child: Text(
+                          '${_weightPercent(_checkInWeightTotal)} RECOVERY WEIGHT',
+                          style: const TextStyle(
                             color: AppColors.limeAccent,
                             fontSize: 10,
                             fontWeight: FontWeight.w800,
@@ -107,7 +118,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                     color: AppColors.limeAccent,
                     onChanged: (v) => setState(() => _energy = v),
                     weightDesc:
-                        '10% Weight: High subjective vitality raises recovery.',
+                        '${_weightPercent(RecoveryCalculator.defaultEnergyWeight)} '
+                        'Weight: High subjective vitality raises recovery.',
                   ),
                   const SizedBox(height: 20),
 
@@ -122,7 +134,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                     color: AppColors.moderateAmber,
                     onChanged: (v) => setState(() => _soreness = v),
                     weightDesc:
-                        '10% Weight: Elevated muscle damage reduces training capacity.',
+                        '${_weightPercent(RecoveryCalculator.defaultSorenessWeight)} '
+                        'Weight: Elevated muscle damage reduces training capacity.',
                   ),
                   const SizedBox(height: 20),
 
@@ -137,7 +150,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                     color: AppColors.restCoral,
                     onChanged: (v) => setState(() => _fatigue = v),
                     weightDesc:
-                        '5% Weight: Accounts for nervous system / mental fatigue.',
+                        '${_weightPercent(RecoveryCalculator.defaultFatigueWeight)} '
+                        'Weight: Accounts for nervous system / mental fatigue.',
                   ),
                   const SizedBox(height: 20),
 

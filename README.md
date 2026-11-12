@@ -48,7 +48,7 @@ recovery.
 session are treated as the same sleep and kept once, so multi-source or
 partially-merged records are not double counted.
 
-**Quality.** Sleep quality is not duration alone. It combines sleep efficiency
+**Quality (the main score driver).** Sleep quality is not duration alone. It combines sleep efficiency
 (asleep time against time in bed, scored linearly from 75% up to 95%) with the
 share of deep and REM sleep, each scored against a target (15% deep, 22% REM)
 with no penalty for exceeding it. Weights are sleep efficiency 0.40, deep 0.30,
@@ -61,18 +61,28 @@ REM 0.30, and they are renormalized over the factors actually present:
 
 ## Recovery scoring
 
-Recovery is a deterministic heuristic, not a clinical measurement. Default
-weights (sum 1.00):
+Recovery is a deterministic heuristic, not a clinical measurement. Sleep
+quality is the primary sleep signal, so it carries the largest weight and the
+duration credit is capped by it (sum 1.00):
 
 | Factor | Weight |
 | --- | --- |
-| Sleep duration | 0.25 |
-| Sleep quality | 0.20 |
+| Sleep quality (efficiency, deep, REM) | 0.30 |
 | Nighttime heart rate | 0.18 |
+| Sleep duration (capped by quality) | 0.15 |
 | Recent training load | 0.15 |
-| Energy check-in | 0.09 |
+| Energy check-in | 0.08 |
 | Soreness check-in | 0.08 |
-| Fatigue check-in | 0.05 |
+| Fatigue check-in | 0.06 |
+
+**Why duration cannot carry the score.** The duration component is capped at
+the midpoint between 100 and the measured quality score
+(`min(duration, (100 + quality) / 2)`). Eight hours of well-architected sleep
+keeps its full duration credit, while eight hours of light, fragmented sleep is
+capped near its quality score and drops into the moderate band instead of
+reading as a good night. When the tracker reports no stage or awake data the
+cap is not applied at all - unknown quality is excluded, never treated as bad
+sleep.
 
 Signals that are unavailable are removed and the remaining weights are
 renormalized; a score is produced only when at least 35% of the weight is

@@ -8,16 +8,20 @@ import 'sleep_quality_analyzer.dart';
 /// Designed for trackers that expose standard health signals through Health Connect,
 /// including devices where nocturnal HRV is not reported.
 class RecoveryCalculator {
-  // Configurable heuristic initial weights (must sum to 1.0). Sleep is split
-  // into duration and quality so that two nights of equal length can still
-  // produce different recovery scores.
-  static const double defaultSleepWeight = 0.25;
-  static const double defaultSleepQualityWeight = 0.20;
+  // Configurable heuristic weights (must sum to 1.0).
+  //
+  // Sleep *quality* is the primary sleep signal: how the night was built
+  // (efficiency, deep, REM) matters more than how long it was, because a long
+  // shallow night is not restorative. Duration is kept as a smaller signal and
+  // its credit is capped by quality, so 8-9 hours of light, fragmented sleep
+  // can no longer produce a high recovery score by length alone.
+  static const double defaultSleepQualityWeight = 0.30;
   static const double defaultNightHrWeight = 0.18;
+  static const double defaultSleepWeight = 0.15;
   static const double defaultStrainWeight = 0.15;
-  static const double defaultEnergyWeight = 0.09;
+  static const double defaultEnergyWeight = 0.08;
   static const double defaultSorenessWeight = 0.08;
-  static const double defaultFatigueWeight = 0.05;
+  static const double defaultFatigueWeight = 0.06;
 
   // Minimum consecutive RHR daily observations needed before establishing a personal baseline
   static const int minRhrBaselineObservations = 3;
@@ -53,24 +57,10 @@ class RecoveryCalculator {
             ? SleepQualityAnalyzer.analyze(sleepSession)
             : null);
 
-    // 1. Sleep Duration Score (25%)
-    if (sleepSession != null && sleepSession.totalMinutes > 0) {
-      final sleepScore = calculateSleepScore(
-        actualMinutes: sleepSession.totalMinutes,
-        targetHours: sleepTargetHours,
-      );
-      componentScores['Sleep Duration'] = sleepScore;
-      rawWeights['Sleep Duration'] = defaultSleepWeight;
-      availableSignals.add(
-        'Sleep Duration (${sleepSession.hours.toStringAsFixed(1)}h)',
-      );
-    } else {
-      missingSignals.add(
-        'Sleep Session (No compatible nighttime sleep record was found)',
-      );
-    }
-
-    // 2. Sleep Quality Score (20%) - stages + efficiency, never duration alone.
+    // 1. Sleep Quality Score (30%) - stages + efficiency, never duration alone.
+    // This is deliberately scored and listed before duration: it is the primary
+    // sleep driver of recovery, so two nights of equal length can, and should,
+    // land far apart.
     if (quality != null && quality.score != null) {
       componentScores['Sleep Quality'] = quality.score!;
       rawWeights['Sleep Quality'] = defaultSleepQualityWeight;
@@ -79,6 +69,30 @@ class RecoveryCalculator {
       missingSignals.add(
         'Sleep Quality (No sleep stage or awake data was reported, so quality '
         'could not be assessed)',
+      );
+    }
+
+    // 2. Sleep Duration Score (15%) - secondary, and capped by quality so a
+    // long shallow night cannot carry the score on hours alone.
+    if (sleepSession != null && sleepSession.totalMinutes > 0) {
+      final rawDurationScore = calculateSleepScore(
+        actualMinutes: sleepSession.totalMinutes,
+        targetHours: sleepTargetHours,
+      );
+      final durationScore = calculateRestorativeDurationScore(
+        durationScore: rawDurationScore,
+        qualityScore: quality?.score,
+      );
+      componentScores['Sleep Duration'] = durationScore;
+      rawWeights['Sleep Duration'] = defaultSleepWeight;
+      final capApplied = durationScore < rawDurationScore - 0.5;
+      availableSignals.add(
+        'Sleep Duration (${sleepSession.hours.toStringAsFixed(1)}h'
+        '${capApplied ? ', credit capped by sleep quality' : ''})',
+      );
+    } else {
+      missingSignals.add(
+        'Sleep Session (No compatible nighttime sleep record was found)',
       );
     }
 
@@ -342,6 +356,26 @@ class RecoveryCalculator {
     }
   }
 
+  /// Caps the duration component by how restorative the night actually was.
+  ///
+  /// Duration credit can never exceed the midpoint between a perfect quality
+  /// score (100) and the measured quality: at quality 100 the full duration
+  /// score is available, while at quality 40 the cap is 70. Eight restless
+  /// hours therefore cannot be scored like eight well-architected hours, even
+  /// though both are the same length.
+  ///
+  /// When quality cannot be assessed (no stage or awake data) the duration
+  /// score is returned unchanged - missing tracker data is never punished as if
+  /// it were bad sleep.
+  static double calculateRestorativeDurationScore({
+    required double durationScore,
+    double? qualityScore,
+  }) {
+    if (qualityScore == null) return durationScore.clamp(0.0, 100.0);
+    final cap = (100.0 + qualityScore.clamp(0.0, 100.0)) / 2.0;
+    return durationScore.clamp(0.0, cap);
+  }
+
   /// Calculates resting heart rate recovery score (0-100) relative to personal baseline.
   static double calculateRhrScore({
     required double todayRhr,
@@ -485,7 +519,20 @@ class RecoveryCalculator {
     switch (name) {
       case 'Sleep Duration':
         final hours = (sleepSession?.hours ?? 0).toStringAsFixed(1);
-        return '$hours h of ${sleepTargetHours.toStringAsFixed(1)} h target';
+        final base =
+            '$hours h of ${sleepTargetHours.toStringAsFixed(1)} h target';
+        final qualityScore = quality?.score;
+        if (sleepSession == null || qualityScore == null) return base;
+        final rawScore = calculateSleepScore(
+          actualMinutes: sleepSession.totalMinutes,
+          targetHours: sleepTargetHours,
+        );
+        final capped = calculateRestorativeDurationScore(
+          durationScore: rawScore,
+          qualityScore: qualityScore,
+        );
+        if (capped >= rawScore - 0.5) return base;
+        return '$base • capped to ${capped.round()} by sleep quality';
       case 'Sleep Quality':
         if (quality == null) return 'Not assessed';
         return quality.availableFactors.isEmpty
@@ -589,8 +636,12 @@ class RecoveryCalculator {
     if (quality != null && quality.isAvailable) {
       buffer.write(
         'Sleep quality (${quality.score!.round()}/100) is scored from stage '
-        'composition and efficiency, so two nights of equal length can score '
-        'differently. ',
+        'composition and efficiency and carries more weight than duration, so '
+        'two nights of equal length can score differently. ',
+      );
+      buffer.write(
+        'The duration credit is capped by quality, which keeps a long shallow '
+        'night from reading as restorative. ',
       );
     }
 

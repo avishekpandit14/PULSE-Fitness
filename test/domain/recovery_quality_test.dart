@@ -98,11 +98,88 @@ void main() {
         good.componentScores['Sleep Quality']!,
         greaterThan(poor.componentScores['Sleep Quality']!),
       );
-      // Duration component is identical for both nights.
+      // Same length, so the raw duration score is the same, but the shallow
+      // night keeps less duration credit because quality caps it.
       expect(
-        good.componentScores['Sleep Duration'],
-        equals(poor.componentScores['Sleep Duration']),
+        good.componentScores['Sleep Duration']!,
+        greaterThan(poor.componentScores['Sleep Duration']!),
       );
+    });
+
+    test('duration credit is capped by sleep quality', () {
+      final good = recovery(nightHrData: nightHr());
+      final poor = recovery(
+        sleep: nightSleep(
+          deepMinutes: 24,
+          lightMinutes: 432,
+          remMinutes: 24,
+          awakeMinutes: 90,
+        ),
+        nightHrData: nightHr(),
+      );
+
+      // Eight hours either way: only the architecture differs.
+      expect(good.componentScores['Sleep Duration']!, greaterThan(90));
+      expect(poor.componentScores['Sleep Duration']!, lessThan(70));
+    });
+
+    test('sleep quality outweighs duration in the score', () {
+      final result = recovery(
+        sleep: nightSleep(
+          deepMinutes: 24,
+          lightMinutes: 432,
+          remMinutes: 24,
+          awakeMinutes: 90,
+        ),
+        nightHrData: nightHr(),
+      );
+
+      expect(
+        result.componentWeights['Sleep Quality']!,
+        greaterThan(result.componentWeights['Sleep Duration']!),
+      );
+      expect(
+        result.componentWeights['Sleep Quality']!,
+        greaterThanOrEqualTo(0.30),
+      );
+    });
+
+    test('eight hours of shallow sleep cannot read as a high score', () {
+      final poor = recovery(
+        sleep: nightSleep(
+          deepMinutes: 24,
+          lightMinutes: 432,
+          remMinutes: 24,
+          awakeMinutes: 90,
+        ),
+        nightHrData: nightHr(),
+      );
+      final good = recovery(nightHrData: nightHr());
+
+      expect(poor.score!, lessThanOrEqualTo(67));
+      expect(poor.category, isNot(equals(RecoveryCategory.ready)));
+      expect(good.score!, greaterThanOrEqualTo(poor.score! + 15));
+    });
+
+    test('duration keeps full credit when stage data is missing', () {
+      final result = RecoveryCalculator.calculate(
+        sleepSession: nightSleep(
+          deepMinutes: null,
+          lightMinutes: null,
+          remMinutes: null,
+          awakeMinutes: null,
+        ),
+        todayRhr: null,
+        historicalRhrs: const [],
+        yesterdayStrain: null,
+        checkIn: null,
+        sleepTargetHours: 8.0,
+      );
+
+      // Quality is excluded (unknown), never treated as a zero that would cap
+      // the duration credit.
+      expect(result.componentScores.containsKey('Sleep Quality'), isFalse);
+      expect(result.componentScores['Sleep Duration'], closeTo(95.0, 0.5));
     });
 
     test('naps are display-only and never change the recovery score', () {

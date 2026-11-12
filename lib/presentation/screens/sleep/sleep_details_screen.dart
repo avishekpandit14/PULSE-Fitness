@@ -595,9 +595,12 @@ class SleepDetailsScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'PULSE scoring rewards meeting 100%–110% of this target. '
-                    'Oversleeping significantly beyond 125% of your target does not reward unlimited points, '
-                    'reflecting the lethargy and circadian disruption of overextended bed rest.',
+                    'PULSE scoring rewards meeting 100%–110% of this target, but '
+                    'duration only counts as far as the night was restorative: '
+                    'the duration credit is capped by sleep quality (deep/REM '
+                    'share and efficiency), so a long light night cannot score '
+                    'like a long deep one. Oversleeping beyond 125% of target '
+                    'does not reward unlimited points.',
                     style: AppTypography.bodySmall.copyWith(
                       color: AppColors.textSecondary,
                       height: 1.4,
