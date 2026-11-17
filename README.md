@@ -1,122 +1,138 @@
-# PULSE Fitness
+<p align="center">
+  <img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="112" alt="PULSE icon" />
+</p>
 
-PULSE is a Flutter app that turns Android Health Connect data into simple
-recovery, sleep, and training-load insights. It is designed to work with
-affordable fitness trackers when their companion app writes compatible records
-to Health Connect.
+<h1 align="center">PULSE Fitness</h1>
 
-PULSE is an experimental wellness app, not a medical device. Its scores are
-heuristic estimates and are not intended for diagnosis or treatment.
+<p align="center">
+  <b>Recovery, sleep and training-load insight from Android Health Connect — measured, explainable, on-device.</b>
+</p>
 
-## Features
+<p align="center">
+  <img alt="Flutter" src="https://img.shields.io/badge/Flutter-3.44-02569B?logo=flutter&logoColor=white">
+  <img alt="Android" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
+  <img alt="Health Connect" src="https://img.shields.io/badge/Health%20Connect-enabled-4285F4">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-yellow">
+  <img alt="Local first" src="https://img.shields.io/badge/data-local%20only-6B7280">
+</p>
 
-- Recovery score with a transparent, per-factor breakdown
-- Nighttime sleep scored separately from naps
-- Sleep quality from efficiency plus available stage shares
-- Nighttime heart-rate analysis (average, lowest, p95 highest, stability, trend)
-- Duplicate and overlapping sleep-record handling
-- Data-quality and confidence indicators instead of fabricated values
-- Training-load and heart-rate-zone views
-- Health Connect sync for steps, heart rate, resting heart rate, active
-  calories, sleep, and workouts
-- Local SQLite storage
-- Demo mode with synthetic data
+<p align="center">
+  <sub>PULSE is an experimental wellness app, not a medical device. Scores are heuristic estimates — never diagnosis or treatment.</sub>
+</p>
 
-Tracker compatibility depends on the records provided by the tracker’s
-companion app through Health Connect. PULSE has not been tested with every
-tracker or companion app.
+---
 
-## Sleep analysis
+## Why PULSE
 
-PULSE treats a night and a nap as different things.
+Most recovery apps want a subscription and a specific wearable. PULSE works with
+whatever your tracker already writes into Android **Health Connect**: sleep,
+heart rate, resting heart rate, steps, active calories and workouts.
 
-**Night classification.** A session belongs to the night when the majority of
-its minutes fall inside the night band (18:00 → 12:00 next day). A session
-spanning midnight is handled by that same majority rule, not by its start date.
+- **No account, no cloud backend, no ads.** Everything is computed and stored on
+  the phone in local SQLite.
+- **Explainable scores.** Every recovery number lists the signals behind it and
+  how many points each one added or removed.
+- **No invented data.** A missing signal is shown as *unavailable* and excluded
+  from the maths — it is never silently treated as zero.
+- **No HRV dependency.** Built for affordable trackers that only expose BPM.
 
-**Primary vs. naps.** The primary sleep of the day is the longest *nighttime*
-session; duration breaks ties. It is never chosen by "most recently recorded"
-and a nap can never replace it or reduce its score. If no session qualifies as
-nighttime, the longest session overall is used and the UI marks it as not
-nighttime.
+## The home screen
 
-**Naps** are displayed separately with their start/end time and minutes. They
-are informational only and are never added to nightly sleep or weighted into
-recovery.
+<p align="center">
+  <img src="docs/screenshot-dashboard.png" width="330" alt="PULSE dashboard showing sleep, recovery and strain rings, the training recommendation for today and the sleep and heart monitor cards" />
+</p>
 
-**Duplicates.** Sessions whose intervals overlap by 50% or more of the shorter
-session are treated as the same sleep and kept once, so multi-source or
-partially-merged records are not double counted.
+<p align="center">
+  <sub>Three rings for the day, the reasoning behind the recommendation, and the signals that moved it.</sub>
+</p>
 
-**Quality (the main score driver).** Sleep quality is not duration alone. It combines sleep efficiency
-(asleep time against time in bed, scored linearly from 75% up to 95%) with the
-share of deep and REM sleep, each scored against a target (15% deep, 22% REM)
-with no penalty for exceeding it. Weights are sleep efficiency 0.40, deep 0.30,
-REM 0.30, and they are renormalized over the factors actually present:
+The dashboard answers one question at a glance — *how ready am I today?*
 
-- A night with full stage data is scored on all three.
-- A tracker that reports only asleep/awake time yields an efficiency-only
-  quality score flagged as low confidence.
-- Missing stages are reported as unavailable, never counted as a zero score.
+| Block | What it shows |
+| --- | --- |
+| Header | Profile, check-in streak, current day, Health Connect sync state |
+| **Sleep ring** | Sleep performed against your personal target |
+| **Recovery ring** | Today's recovery score and category |
+| **Strain ring** | Accumulated cardiovascular + movement load (0–21) |
+| Training recommendation | Heavy / moderate / light / rest, with the factors that drove it |
+| Sleep & Heart monitor | Sleep-quality status and resting HR versus your own baseline |
+| My Day | Today's synced workouts |
 
-## Recovery scoring
+Each ring opens its own deep-dive screen: full sleep analysis (night vs naps,
+stage shares, quality breakdown, nighttime heart rate) and a recovery breakdown
+with signed per-factor contributions.
 
-Recovery is a deterministic heuristic, not a clinical measurement. Sleep
-quality is the primary sleep signal, so it carries the largest weight and the
-duration credit is capped by it (sum 1.00):
+## How scoring works
+
+### Sleep: quality first, duration second
+
+A night and a nap are different things, and length alone is not recovery.
+
+- **Night classification** — a session counts as the night when the majority of
+  its minutes fall inside the 18:00 → 12:00 band (midnight is handled).
+- **Primary vs naps** — the primary sleep is the longest *nighttime* session.
+  Naps are listed separately with their start/end times and never replace,
+  reduce or inflate the night score.
+- **Duplicates** — sessions overlapping by ≥ 50% of the shorter one are counted
+  once, so multi-source records are not double counted.
+- **Quality** — built from sleep efficiency (75% → 95%) and deep/REM shares
+  against reference targets (15% deep, 22% REM, no penalty above target).
+  Weights: efficiency `0.40`, deep `0.30`, REM `0.30`, renormalized over what the
+  tracker actually reported. No stage data means *unavailable*, not a zero.
+- **Duration is capped by quality** — duration credit is limited to
+  `min(duration, (100 + quality) / 2)`, so eight restless hours cannot score
+  like eight well-architected hours.
+
+### Recovery: transparent weights
 
 | Factor | Weight |
 | --- | --- |
-| Sleep quality (efficiency, deep, REM) | 0.30 |
+| Sleep quality | 0.30 |
 | Nighttime heart rate | 0.18 |
-| Sleep duration (capped by quality) | 0.15 |
+| Sleep duration (quality-capped) | 0.15 |
 | Recent training load | 0.15 |
 | Energy check-in | 0.08 |
 | Soreness check-in | 0.08 |
 | Fatigue check-in | 0.06 |
 
-**Why duration cannot carry the score.** The duration component is capped at
-the midpoint between 100 and the measured quality score
-(`min(duration, (100 + quality) / 2)`). Eight hours of well-architected sleep
-keeps its full duration credit, while eight hours of light, fragmented sleep is
-capped near its quality score and drops into the moderate band instead of
-reading as a good night. When the tracker reports no stage or awake data the
-cap is not applied at all - unknown quality is excluded, never treated as bad
-sleep.
+Missing signals are dropped and the remaining weights renormalized; a score
+needs at least 35% weight coverage, and confidence falls as coverage shrinks.
+Each factor reports `(component − 50) × normalized weight`, which sums to the
+final score's offset from neutral.
 
-Signals that are unavailable are removed and the remaining weights are
-renormalized; a score is produced only when at least 35% of the weight is
-covered, and confidence falls as coverage shrinks. The recovery details screen
-lists every factor with its signed point contribution, computed as
-`(component score − 50) × normalized weight`, so the factors add up to the
-final score instead of hiding behind an opaque number.
+**Nighttime heart rate without HRV.** PULSE uses overnight BPM directly: nightly
+average, lowest, p95 highest, stability and trend against your own baseline
+(minimum 3 nights; resting-HR history is the fallback). Samples deviating more
+than 35 bpm from the night median are treated as movement artifacts, and a night
+needs 5 valid samples. Nighttime HR *replaces* resting HR in the score rather
+than counting the same physiology twice.
 
-**Nighttime heart rate without HRV.** The supported trackers provide no HRV, so
-PULSE analyzes nighttime BPM directly: a nightly average over the sleep window,
-plus lowest, p95 highest, stability (band of 8 bpm) and a trend against your own
-nightly baseline. Samples deviating more than 35 bpm from the night median are
-treated as movement artifacts and excluded, and a night needs at least 5 valid
-samples to be reported. Nighttime heart rate is compared against a separate
-nightly baseline (a minimum of 3 nights; resting-heart-rate history is used as a
-fallback until then). Because nighttime heart rate and resting heart rate are
-correlated, nighttime heart rate *replaces* resting heart rate in the recovery
-score rather than counting twice.
+## Project layout
 
-## Requirements
+```text
+lib/
+├── core/            # design tokens (colours, typography) and date utilities
+├── data/            # Health Connect, SQLite, mock generator, repositories
+├── domain/          # algorithms + models, framework-free and unit tested
+│   ├── algorithms/  # sleep processor, quality, nighttime HR, recovery, strain
+│   └── models/
+└── presentation/    # screens, dashboard widgets, providers (Provider)
+test/
+└── domain/          # algorithm tests (classification, quality, recovery, HR)
+tool/                # icon generator (node tool/generate_app_icons.js)
+```
 
-- Flutter SDK compatible with this project
-- Android SDK
-- Android Health Connect on an Android device for real tracker data
-- A JDK compatible with the configured Android toolchain
+## Getting started
 
-## Setup
+**Requirements:** Flutter SDK (3.44+), Android SDK, a JDK matching the toolchain,
+and Health Connect on the device for real data.
 
 ```bash
 flutter pub get
 flutter run
 ```
 
-For development checks:
+Quality gates used by this project:
 
 ```bash
 dart format lib test
@@ -124,27 +140,24 @@ flutter analyze
 flutter test
 ```
 
-On first use, grant PULSE access to the Health Connect data types you want to
-sync. Without Health Connect data, use the app's demo mode or enter supported
-manual information. Partial permissions are handled gracefully: the metrics you
-did not grant simply show as unavailable, with a confidence indicator, instead
-of reading as zero.
+On first launch, grant only the Health Connect types you are comfortable with —
+partial permissions are handled gracefully, and un-granted metrics simply show as
+unavailable with a lower confidence. No Health Connect data at all? Turn on
+**Demo mode** in Settings for clearly labelled synthetic telemetry.
 
-## Downloading the APK
+## Install the app
 
-Download the latest Android APK from the **Releases** section of the
-[PULSE-Fitness GitHub repository](https://github.com/avishekpandit14/PULSE-Fitness)
-when a release is available. APK files are release artifacts and are not kept
-in the source repository.
+Download the APK from the **Releases** section of the
+[PULSE-Fitness repository](https://github.com/avishekpandit14/PULSE-Fitness) when
+a release is available, or build one locally:
 
-To build an installable APK locally, `flutter build apk --debug` produces an
-APK signed with the local debug key. A release APK requires the signing
-variables below.
+```bash
+flutter build apk --debug      # installable, signed with the debug key
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
 
-## Release signing
-
-Release signing credentials must remain outside the repository. The Android
-build configuration expects these environment variables:
+Release APKs require your own keystore. Signing credentials stay outside the
+repository; the Gradle config reads:
 
 ```text
 PULSE_KEYSTORE_PATH
@@ -153,25 +166,36 @@ PULSE_KEY_ALIAS
 PULSE_KEY_PASSWORD
 ```
 
-Never commit real credentials, keystores, or passwords.
+Never commit keystores, passwords or `.env` files.
+
+## Privacy
+
+Health data is read from Health Connect on-device, processed locally and stored
+in local SQLite. There is no application-owned backend, no analytics SDK and no
+advertising. See [PRIVACY.md](PRIVACY.md) for the full explanation.
 
 ## Limitations
 
-- No HRV: heart-rate analysis uses nighttime BPM only and makes no
-  HRV-based claims.
-- A nightly heart-rate baseline needs 3 nights before trend comparison is
-  shown; resting heart rate is used as a fallback until then.
-- Stage-less trackers produce an efficiency-only sleep quality with low
-  confidence.
-- Awake *episode counts* are unavailable from Health Connect; only awake
-  minutes are reported.
-- Naps that a tracker merges into one long sleep record cannot be separated.
-- Nighttime heart-rate coverage is measured in 30-minute buckets, so short
-  gaps are not individually flagged.
-- Companion-app synchronization may be delayed or incomplete, and some
-  trackers provide no resting-heart-rate record.
-- Recovery and strain scores are heuristic estimates, not medical advice.
+- **No HRV.** Heart-rate analysis uses nighttime BPM only and makes no HRV-based
+  claims.
+- **Baselines need history.** A nightly HR baseline needs 3 nights; resting HR
+  is the fallback until then.
+- **Stage-less trackers** yield an efficiency-only sleep quality (low confidence).
+- **Awake episodes** are not available from Health Connect — only awake minutes.
+- **Merged naps** inside one long sleep record cannot be separated.
+- **HR coverage** is measured in 30-minute buckets, so short gaps are not
+  individually flagged.
+- **Compatibility varies.** Tracker support depends entirely on what the
+  companion app writes to Health Connect.
+- **Heuristics, not medicine.** Recovery and strain are estimates.
+
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Please run the three quality gates
+above before opening a PR, and keep new scoring logic covered by tests in
+`test/domain/`.
 
 ## License
 
-PULSE is proposed for release under the MIT License. See [LICENSE](LICENSE).
+Released under the [MIT License](LICENSE).
