@@ -28,52 +28,51 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(index: _currentIndex, children: _screens),
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          border: Border(
-            top: BorderSide(color: AppColors.borderSubtle, width: 1),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) => setState(() => _currentIndex = index),
+        backgroundColor: AppColors.background,
+        elevation: 0,
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: AppColors.limeAccent,
+        unselectedItemColor: AppColors.textTertiary,
+        selectedFontSize: 10,
+        unselectedFontSize: 10,
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700),
+        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard_rounded),
+            activeIcon: Icon(
+              Icons.dashboard_rounded,
+              color: AppColors.limeAccent,
+            ),
+            label: 'Today',
           ),
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_rounded),
-              activeIcon: Icon(
-                Icons.dashboard_rounded,
-                color: AppColors.limeAccent,
-              ),
-              label: 'Today',
+          BottomNavigationBarItem(
+            icon: Icon(Icons.speed_rounded),
+            activeIcon: Icon(Icons.speed_rounded, color: AppColors.limeAccent),
+            label: 'Recovery',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bolt_rounded),
+            activeIcon: Icon(Icons.bolt_rounded, color: AppColors.limeAccent),
+            label: 'Strain',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.insights_rounded),
+            activeIcon: Icon(
+              Icons.insights_rounded,
+              color: AppColors.limeAccent,
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.speed_rounded),
-              activeIcon: Icon(
-                Icons.speed_rounded,
-                color: AppColors.limeAccent,
-              ),
-              label: 'Recovery',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.bolt_rounded),
-              activeIcon: Icon(Icons.bolt_rounded, color: AppColors.limeAccent),
-              label: 'Strain',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.insights_rounded),
-              activeIcon: Icon(
-                Icons.insights_rounded,
-                color: AppColors.limeAccent,
-              ),
-              label: 'Trends',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.tune_rounded),
-              activeIcon: Icon(Icons.tune_rounded, color: AppColors.limeAccent),
-              label: 'Settings',
-            ),
-          ],
-        ),
+            label: 'Trends',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.tune_rounded),
+            activeIcon: Icon(Icons.tune_rounded, color: AppColors.limeAccent),
+            label: 'Settings',
+          ),
+        ],
       ),
     );
   }

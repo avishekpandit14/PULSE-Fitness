@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pulse_fitness/domain/models/recovery_result.dart';
+import 'package:pulse_fitness/domain/models/sleep_session_model.dart';
 import 'package:pulse_fitness/domain/models/strain_result.dart';
-import 'package:pulse_fitness/presentation/screens/dashboard/widgets/circular_recovery_gauge.dart';
+import 'package:pulse_fitness/presentation/screens/dashboard/widgets/tri_metric_rings.dart';
 import 'package:pulse_fitness/presentation/screens/strain/widgets/circular_strain_gauge.dart';
 import 'package:pulse_fitness/presentation/screens/strain/widgets/recommended_strain_card.dart';
 import 'package:pulse_fitness/presentation/screens/strain/widgets/weekly_strain_history_card.dart';
@@ -22,19 +23,61 @@ void main() {
     expect(find.text('HIGH CONFIDENCE'), findsOneWidget);
   });
 
-  testWidgets('CircularRecoveryGauge displays not enough data cleanly', (
+  testWidgets('TriMetricRings shows placeholders when nothing is synced', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      const Directionality(
-        textDirection: TextDirection.ltr,
-        child: CircularRecoveryGauge(recovery: null),
+      MaterialApp(
+        home: Scaffold(
+          body: TriMetricRings(
+            recovery: null,
+            strain: null,
+            sleepSession: null,
+            targetHours: 8,
+            onSleepTap: () {},
+            onRecoveryTap: () {},
+            onStrainTap: () {},
+          ),
+        ),
       ),
     );
+    await tester.pumpAndSettle();
 
+    expect(find.text('SLEEP'), findsOneWidget);
     expect(find.text('RECOVERY'), findsOneWidget);
-    expect(find.text('—'), findsOneWidget);
-    expect(find.text('NOT ENOUGH DATA'), findsOneWidget);
+    expect(find.text('STRAIN'), findsOneWidget);
+    // A ring with no data must show unavailable, never a zero.
+    expect(find.text('—'), findsNWidgets(3));
+  });
+
+  testWidgets('TriMetricRings renders sleep performance against the target', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TriMetricRings(
+            recovery: null,
+            strain: null,
+            sleepSession: SleepSessionModel(
+              id: 'night',
+              dateKey: '2026-11-12',
+              startTime: DateTime(2026, 11, 11, 23),
+              endTime: DateTime(2026, 11, 12, 7),
+              totalMinutes: 420,
+            ),
+            targetHours: 7,
+            onSleepTap: () {},
+            onRecoveryTap: () {},
+            onStrainTap: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 7h asleep against a 7h target is 100%.
+    expect(find.text('100'), findsOneWidget);
   });
 
   testWidgets('CircularStrainGauge renders daily score and category badge', (
