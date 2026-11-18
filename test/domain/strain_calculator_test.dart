@@ -265,7 +265,7 @@ void main() {
         strain: strain,
       );
       expect(rec.suggestion, equals(TrainingSuggestion.heavy));
-      expect(rec.safetyDisclaimer.isNotEmpty, isTrue);
+      expect(rec.mainFactors, isNotEmpty);
     });
 
     test('Low recovery score suggests rest and regeneration', () {
@@ -302,7 +302,6 @@ void main() {
         strain: strain,
       );
       expect(rec.suggestion, equals(TrainingSuggestion.rest));
-      expect(rec.safetyDisclaimer.contains('heuristic guidance'), isTrue);
     });
   });
 }

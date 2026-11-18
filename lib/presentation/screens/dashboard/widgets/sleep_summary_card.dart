@@ -32,44 +32,29 @@ class SleepSummaryCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: AppColors.sleepCyan.withAlpha(30),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.bedtime_rounded,
-                      color: AppColors.sleepCyan,
-                      size: 16,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'SLEEP & REST',
-                    style: AppTypography.labelMedium.copyWith(
-                      letterSpacing: 1.0,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: AppColors.sleepCyan.withAlpha(30),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.bedtime_rounded,
+                  color: AppColors.sleepCyan,
+                  size: 16,
+                ),
               ),
-              if (sleepSession != null &&
-                  sleepSession!.dataQuality != SleepDataQuality.measured) ...[
-                const SizedBox(height: 8),
-                Text(
-                  sleepSession!.dataQuality == SleepDataQuality.partial
-                      ? '${sleepSession!.unknownMinutes} minutes of the sleep window are unclassified and excluded.'
-                      : 'Sleep duration is unavailable because no validated asleep intervals were recorded.',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.moderateAmber,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'SLEEP & REST',
+                  style: AppTypography.labelMedium.copyWith(
+                    letterSpacing: 1.0,
+                    color: AppColors.textSecondary,
                   ),
                 ),
-              ],
+              ),
               const Icon(
                 Icons.arrow_forward_ios_rounded,
                 color: AppColors.textTertiary,
@@ -77,6 +62,41 @@ class SleepSummaryCard extends StatelessWidget {
               ),
             ],
           ),
+          // Partial or unavailable data gets its own line: it never fit beside
+          // the title and used to overflow the header row.
+          if (sleepSession != null &&
+              sleepSession!.dataQuality != SleepDataQuality.measured) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: AppColors.moderateAmber.withAlpha(20),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.info_outline_rounded,
+                    size: 13,
+                    color: AppColors.moderateAmber,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      sleepSession!.dataQuality == SleepDataQuality.partial
+                          ? '${sleepSession!.unknownMinutes} minutes of the sleep window are unclassified and excluded.'
+                          : 'Sleep duration is unavailable because no validated asleep intervals were recorded.',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.moderateAmber,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           if (hasData) ...[
             Row(
@@ -215,11 +235,13 @@ class SleepSummaryCard extends StatelessWidget {
                       color: AppColors.sleepCyan,
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      'Sleep Consistency: ${sleepSession!.consistencyScore!.round()}%',
-                      style: AppTypography.bodySmall.copyWith(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Text(
+                        'Sleep Consistency: ${sleepSession!.consistencyScore!.round()}%',
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
@@ -244,10 +266,12 @@ class SleepSummaryCard extends StatelessWidget {
                         color: AppColors.moderateAmber,
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        'Sleep Record Unavailable',
-                        style: AppTypography.titleSmall.copyWith(
-                          color: AppColors.moderateAmber,
+                      Expanded(
+                        child: Text(
+                          'Sleep Record Unavailable',
+                          style: AppTypography.titleSmall.copyWith(
+                            color: AppColors.moderateAmber,
+                          ),
                         ),
                       ),
                     ],
