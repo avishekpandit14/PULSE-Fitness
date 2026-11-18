@@ -36,17 +36,26 @@ heart rate, resting heart rate, steps, active calories and workouts.
   from the maths — it is never silently treated as zero.
 - **No HRV dependency.** Built for affordable trackers that only expose BPM.
 
-## The home screen
+## Screens
 
-<p align="center">
-  <img src="docs/screenshot-dashboard.png" width="330" alt="PULSE dashboard showing sleep, recovery and strain rings, the training recommendation for today and the sleep and heart monitor cards" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshot-dashboard.png" width="230" alt="PULSE dashboard with sleep, recovery and strain rings, the training recommendation, and the sleep and heart monitor cards" /><br/>
+      <sub><b>Today</b><br/>Rings, then the reasoning</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshot-recovery.png" width="230" alt="Recovery Deep Dive showing the estimate, its confidence, and the signed point contribution of each signal" /><br/>
+      <sub><b>Recovery</b><br/>What moved your score, in points</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshot-sleep.png" width="230" alt="Sleep and Rest Analysis showing 6.6 hours against target, the stage architecture bar, and a 95/100 quality score with confidence" /><br/>
+      <sub><b>Sleep</b><br/>Stage architecture and quality</sub>
+    </td>
+  </tr>
+</table>
 
-<p align="center">
-  <sub>Three rings for the day, the reasoning behind the recommendation, and the signals that moved it.</sub>
-</p>
-
-The dashboard answers one question at a glance — *how ready am I today?*
+**Today** answers one question at a glance — *how ready am I today?*
 
 | Block | What it shows |
 | --- | --- |
@@ -58,9 +67,14 @@ The dashboard answers one question at a glance — *how ready am I today?*
 | Sleep & Heart monitor | Sleep-quality status and resting HR versus your own baseline |
 | My Day | Today's synced workouts |
 
-Each ring opens its own deep-dive screen: full sleep analysis (night vs naps,
-stage shares, quality breakdown, nighttime heart rate) and a recovery breakdown
-with signed per-factor contributions.
+**Recovery** never shows a number without its reasons: the estimate, its
+confidence, and a per-signal breakdown such as *Sleep Quality +16.4*,
+*Recent Load +8.2*, *Sleep Duration +4.7* — including which signals were missing
+and how the weights were renormalized around them.
+
+**Sleep** keeps the night separate from naps, draws the stage architecture
+(deep / light / REM / awake), and scores quality independently of duration, with
+the reference bands stated in the app rather than hidden in code.
 
 ## How scoring works
 
