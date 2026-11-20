@@ -35,6 +35,9 @@ heart rate, resting heart rate, steps, active calories and workouts.
 - **No invented data.** A missing signal is shown as *unavailable* and excluded
   from the maths — it is never silently treated as zero.
 - **No HRV dependency.** Built for affordable trackers that only expose BPM.
+- **Quiet cards.** A card shows its numbers and the facts behind them, then
+  stops. Repeated legal boilerplate stays out of the interface, and data-quality
+  notes live on their own line instead of crowding a card header.
 
 ## Screens
 
@@ -63,8 +66,8 @@ heart rate, resting heart rate, steps, active calories and workouts.
 | **Sleep ring** | Sleep performed against your personal target |
 | **Recovery ring** | Today's recovery score and category |
 | **Strain ring** | Accumulated cardiovascular + movement load (0–21) |
-| Training recommendation | Heavy / moderate / light / rest, with the factors that drove it |
-| Sleep & Heart monitor | Sleep-quality status and resting HR versus your own baseline |
+| Training recommendation | Heavy / moderate / light / rest, with the key factors that drove the call and nothing more |
+| Sleep & Heart monitor | Sleep-quality status and resting HR versus your own baseline, plus an on-card note when the tracker reported partial or no data |
 | My Day | Today's synced workouts |
 
 **Recovery** never shows a number without its reasons: the estimate, its
