@@ -117,27 +117,33 @@ class SleepSummaryCard extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'TARGET: ${targetHours.toStringAsFixed(1)} hrs',
-                      style: AppTypography.labelMedium.copyWith(
-                        color: AppColors.textSecondary,
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'TARGET: ${targetHours.toStringAsFixed(1)} hrs',
+                        style: AppTypography.labelMedium.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${((sleepSession!.hours / targetHours) * 100).round()}% Achieved',
-                      style: TextStyle(
-                        color: sleepSession!.hours >= targetHours
-                            ? AppColors.readyGreen
-                            : AppColors.moderateAmber,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                      const SizedBox(height: 2),
+                      Text(
+                        '${((sleepSession!.hours / targetHours) * 100).round()}% Achieved',
+                        style: TextStyle(
+                          color: sleepSession!.hours >= targetHours
+                              ? AppColors.readyGreen
+                              : AppColors.moderateAmber,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -158,27 +164,34 @@ class SleepSummaryCard extends StatelessWidget {
             const SizedBox(height: 14),
             // Sleep stages breakdown
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildStageTile(
-                  'Deep',
-                  sleepSession!.deepMinutes,
-                  AppColors.sleepCyan,
+                Expanded(
+                  child: _buildStageTile(
+                    'Deep',
+                    sleepSession!.deepMinutes,
+                    AppColors.sleepCyan,
+                  ),
                 ),
-                _buildStageTile(
-                  'Light',
-                  sleepSession!.lightMinutes,
-                  Colors.blueAccent,
+                Expanded(
+                  child: _buildStageTile(
+                    'Light',
+                    sleepSession!.lightMinutes,
+                    Colors.blueAccent,
+                  ),
                 ),
-                _buildStageTile(
-                  'REM',
-                  sleepSession!.remMinutes,
-                  Colors.purpleAccent,
+                Expanded(
+                  child: _buildStageTile(
+                    'REM',
+                    sleepSession!.remMinutes,
+                    Colors.purpleAccent,
+                  ),
                 ),
-                _buildStageTile(
-                  'Awake',
-                  sleepSession!.awakeMinutes,
-                  AppColors.textSecondary,
+                Expanded(
+                  child: _buildStageTile(
+                    'Awake',
+                    sleepSession!.awakeMinutes,
+                    AppColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -304,7 +317,14 @@ class SleepSummaryCard extends StatelessWidget {
               decoration: BoxDecoration(color: color, shape: BoxShape.circle),
             ),
             const SizedBox(width: 4),
-            Text(label, style: AppTypography.bodySmall),
+            Flexible(
+              child: Text(
+                label,
+                style: AppTypography.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 2),

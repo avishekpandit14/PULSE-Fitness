@@ -135,7 +135,8 @@ lib/
 │   └── models/
 └── presentation/    # screens, dashboard widgets, providers (Provider)
 test/
-└── domain/          # algorithm tests (classification, quality, recovery, HR)
+├── domain/          # algorithm tests (classification, quality, recovery, HR)
+└── presentation/    # card layout tests: every dashboard card at 320dp wide
 tool/                # icon generator (node tool/generate_app_icons.js)
 ```
 

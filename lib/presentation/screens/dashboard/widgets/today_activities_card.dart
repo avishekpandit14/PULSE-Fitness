@@ -28,16 +28,20 @@ class TodayActivitiesCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                "TODAY'S ACTIVITIES",
-                style: AppTypography.labelMedium.copyWith(
-                  letterSpacing: 1.0,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.textSecondary,
+              Expanded(
+                child: Text(
+                  "TODAY'S ACTIVITIES",
+                  style: AppTypography.labelMedium.copyWith(
+                    letterSpacing: 1.0,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textSecondary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
+              const SizedBox(width: 8),
               Text(
                 workouts.isEmpty
                     ? 'NONE YET'
