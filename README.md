@@ -79,6 +79,19 @@ and how the weights were renormalized around them.
 (deep / light / REM / awake), and scores quality independently of duration, with
 the reference bands stated in the app rather than hidden in code.
 
+The rest of the app is the same idea from four more angles:
+
+| Tab | What it holds |
+| --- | --- |
+| **Recovery** | Today's estimate broken down signal by signal, with its confidence and the weights renormalized around whatever was missing |
+| **Strain** | Today's cardiovascular and movement load against your own weekly plan, with a retry when nothing has synced yet |
+| **Trends** | Seven-day recovery progression, and strain plotted against recovery so supercompensation is visible instead of guessed |
+| **Settings** | Athlete name, age, sleep target, max HR and weekly frequency; data-source and diagnostic audit; privacy manifesto; local database reset |
+
+The three subjective ratings that feed recovery — energy, muscle soreness and
+systemic fatigue — come from the **Daily Check-in** screen, which keeps the
+recent ratings as history so a missing check-in is visible rather than silent.
+
 ## How scoring works
 
 ### Sleep: quality first, duration second
@@ -157,6 +170,10 @@ dart format lib test
 flutter analyze
 flutter test
 ```
+
+`flutter test` also lays every dashboard card out at 320 dp and fails on any
+row that would overflow, so a long label or a wide font is caught on the build
+machine instead of on a phone.
 
 On first launch, grant only the Health Connect types you are comfortable with —
 partial permissions are handled gracefully, and un-granted metrics simply show as
